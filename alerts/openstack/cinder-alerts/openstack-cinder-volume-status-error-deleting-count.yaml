@@ -18,6 +18,7 @@ additionalPrometheusRulesMap:
           node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
           correlation_key: cinder_volume_status/error_deleting
           correlation_scope: cinder_volume_status
+          root_cause: 'true'
         annotations:
           description: >-
             There are {{ $value }} Cinder volumes in error_deleting state.
@@ -40,6 +41,7 @@ additionalPrometheusRulesMap:
           node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
           correlation_key: cinder_volume_status/error_deleting
           correlation_scope: cinder_volume_status
+          root_cause: 'true'
         annotations:
           description: >-
             There are {{ $value }} Cinder volumes in error_deleting state.
