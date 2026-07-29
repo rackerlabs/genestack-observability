@@ -12,6 +12,7 @@ additionalPrometheusRulesMap:
           node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
           correlation_key: cinder_volume_status/error
           correlation_scope: cinder_volume_status
+          root_cause: 'true'
         annotations:
           description: >-
             There are {{ $value }} Cinder volumes in error state. This warning alert fires after 1m.
@@ -27,6 +28,7 @@ additionalPrometheusRulesMap:
           node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
           correlation_key: cinder_volume_status/error
           correlation_scope: cinder_volume_status
+          root_cause: 'true'
         annotations:
           description: >-
             There are {{ $value }} Cinder volumes in error state. This critical alert fires after 5m.
