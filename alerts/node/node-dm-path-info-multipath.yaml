@@ -5,7 +5,7 @@ additionalPrometheusRulesMap:
       rules:
       - alert: node-dm-path-info-multipath-warning
         expr: |
-          count by (instance, k8s_node_name, rackspace_com_coreAccountID, rackspace_com_coreDeviceID) (
+          count by (k8s_node_name) (
             node_dmpath_info{path_checker_state!~"active|ready"}
           ) > 0
         for: 2m
@@ -24,7 +24,7 @@ additionalPrometheusRulesMap:
           dashboard_url: default_dashboard_url
       - alert: node-dm-path-info-multipath-critical
         expr: |
-          count by (instance, k8s_node_name, rackspace_com_coreAccountID, rackspace_com_coreDeviceID) (
+          count by (k8s_node_name) (
             node_dmpath_info{path_checker_state!~"active|ready"}
           ) > 0
         for: 5m
