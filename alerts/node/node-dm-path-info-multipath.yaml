@@ -4,7 +4,10 @@ additionalPrometheusRulesMap:
     - name: node-dm-path-info-multipath
       rules:
       - alert: node-dm-path-info-multipath-warning
-        expr: node_dmpath_info{path_checker_state!~"active|ready"}
+        expr: |
+          count by (k8s_node_name) (
+            node_dmpath_info{path_checker_state!~"active|ready"}
+          ) > 0
         for: 2m
         labels:
           severity: warning
@@ -20,7 +23,10 @@ additionalPrometheusRulesMap:
           summary: Multipathd paths are NOT active|ready and paths are likely orphaned
           dashboard_url: default_dashboard_url
       - alert: node-dm-path-info-multipath-critical
-        expr: node_dmpath_info{path_checker_state!~"active|ready"}
+        expr: |
+          count by (k8s_node_name) (
+            node_dmpath_info{path_checker_state!~"active|ready"}
+          ) > 0
         for: 5m
         labels:
           severity: critical
