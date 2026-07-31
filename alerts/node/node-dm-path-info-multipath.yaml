@@ -18,7 +18,7 @@ additionalPrometheusRulesMap:
           node: '{{ $labels.k8s_node_name }}'
         annotations:
           description: >-
-            {{ $labels.name }} on node {{ $labels.k8s_node_name }}. This warning alert fires after 2m.
+            {{ $value }} multipath path(s) are NOT active|ready on node {{ $labels.k8s_node_name }}. This warning alert fires after 2m.
           runbook_url: default_runbook_url
           summary: Multipathd paths are NOT active|ready and paths are likely orphaned
           dashboard_url: default_dashboard_url
@@ -37,7 +37,7 @@ additionalPrometheusRulesMap:
           node: '{{ $labels.k8s_node_name }}'
         annotations:
           description: >-
-            {{ $labels.name }} on node {{ $labels.k8s_node_name }}. This critical alert fires after 5m.
+            {{ $value }} multipath path(s) are NOT active|ready on node {{ $labels.k8s_node_name }}. This critical alert fires after 5m.
           runbook_url: default_runbook_url
           summary: Multipathd paths are NOT active|ready and paths are likely orphaned
           dashboard_url: default_dashboard_url
