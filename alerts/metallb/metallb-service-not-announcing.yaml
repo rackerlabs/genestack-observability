@@ -1,0 +1,35 @@
+additionalPrometheusRulesMap:
+  metallb-service-not-announcing:
+    groups:
+      - name: metallb-service-not-announcing
+        rules:
+          - alert: metallb-service-not-announcing-warning
+            expr: >-
+              metallb_service_sync_state{job=~".*metallb.*"} == 0
+            for: 5m
+            labels:
+              severity: warning
+              group_name: metallb-service-not-announcing
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB service "{{ $labels.service }}" in namespace "{{ $labels.namespace }}" is not
+                announcing. This warning alert fires after 5m.
+              summary: MetalLB service is not announcing.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url
+          - alert: metallb-service-not-announcing-critical
+            expr: >-
+              metallb_service_sync_state{job=~".*metallb.*"} == 0
+            for: 15m
+            labels:
+              severity: critical
+              group_name: metallb-service-not-announcing
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB service "{{ $labels.service }}" in namespace "{{ $labels.namespace }}" has not
+                been announcing for 15 minutes. This critical alert fires after 15m.
+              summary: MetalLB service is critically not announcing.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url

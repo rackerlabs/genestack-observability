@@ -1,0 +1,35 @@
+additionalPrometheusRulesMap:
+  metallb-pool-exhausted:
+    groups:
+      - name: metallb-pool-exhausted
+        rules:
+          - alert: metallb-pool-exhausted-warning
+            expr: >-
+              metallb_available_ips{job=~".*metallb.*"} == 0
+            for: 5m
+            labels:
+              severity: warning
+              group_name: metallb-pool-exhausted
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB IP address pool "{{ $labels.name }}" has exhausted all available IPs.
+                This warning alert fires after 5m.
+              summary: MetalLB IP pool is exhausted.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url
+          - alert: metallb-pool-exhausted-critical
+            expr: >-
+              metallb_available_ips{job=~".*metallb.*"} == 0
+            for: 15m
+            labels:
+              severity: critical
+              group_name: metallb-pool-exhausted
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB IP address pool "{{ $labels.name }}" has been exhausted for 15 minutes.
+                This critical alert fires after 15m.
+              summary: MetalLB IP pool is critically exhausted.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url

@@ -1,0 +1,35 @@
+additionalPrometheusRulesMap:
+  metallb-controller-down:
+    groups:
+      - name: metallb-controller-down
+        rules:
+          - alert: metallb-controller-down-warning
+            expr: >-
+              up{job=~".*metallb.*", component="controller"} == 0
+            for: 1m
+            labels:
+              severity: warning
+              group_name: metallb-controller-down
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB controller "{{ $labels.instance }}" is down. This warning alert fires
+                after 1m.
+              summary: MetalLB controller is down.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url
+          - alert: metallb-controller-down-critical
+            expr: >-
+              up{job=~".*metallb.*", component="controller"} == 0
+            for: 5m
+            labels:
+              severity: critical
+              group_name: metallb-controller-down
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB controller "{{ $labels.instance }}" is down. This critical alert fires
+                after 5m.
+              summary: MetalLB controller is down.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url

@@ -1,0 +1,35 @@
+additionalPrometheusRulesMap:
+  metallb-speaker-down:
+    groups:
+      - name: metallb-speaker-down
+        rules:
+          - alert: metallb-speaker-down-warning
+            expr: >-
+              up{job=~".*metallb.*", component="speaker"} == 0
+            for: 1m
+            labels:
+              severity: warning
+              group_name: metallb-speaker-down
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB speaker "{{ $labels.instance }}" is down on node {{ $labels.k8s_node_name }}.
+                This warning alert fires after 1m.
+              summary: MetalLB speaker is down.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url
+          - alert: metallb-speaker-down-critical
+            expr: >-
+              up{job=~".*metallb.*", component="speaker"} == 0
+            for: 5m
+            labels:
+              severity: critical
+              group_name: metallb-speaker-down
+              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+            annotations:
+              description: >-
+                MetalLB speaker "{{ $labels.instance }}" is down on node {{ $labels.k8s_node_name }}.
+                This critical alert fires after 5m.
+              summary: MetalLB speaker is down.
+              runbook_url: default_runbook_url
+              dashboard_url: default_dashboard_url

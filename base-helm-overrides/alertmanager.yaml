@@ -26,7 +26,7 @@ inhibit_rules:
   - source_match:
       group_name: kube-node-not-ready
     target_match_re:
-      group_name: ^(kubelet-down|kubelet-too-many-pods|kubelet-pleg-duration-high|kubelet-pod-startup-latency-high|kubelet-client-certificate-expiration|kubelet-client-certificate-renewal-errors|kubelet-server-certificate-expiration|kubelet-server-certificate-renewal-errors|kube-proxy-down|cpu-throttling-high|kube-node-pressure|kube-node-unreachable|kube-node-readiness-flapping|kube-node-eviction|kube-pod-not-ready|kube-pod-crash-looping|kube-container-waiting|kube-pod-container-restarts)$
+      group_name: ^(kubelet-down|kubelet-too-many-pods|kubelet-pleg-duration-high|kubelet-pod-startup-latency-high|kubelet-client-certificate-expiration|kubelet-client-certificate-renewal-errors|kubelet-server-certificate-expiration|kubelet-server-certificate-renewal-errors|kube-proxy-down|cpu-throttling-high|kube-node-pressure|kube-node-unreachable|kube-node-readiness-flapping|kube-node-eviction|kube-pod-not-ready|kube-pod-crash-looping|kube-container-waiting|kube-pod-container-restarts|metallb-speaker-down)$
     equal:
       - node
       - instance
@@ -57,6 +57,24 @@ inhibit_rules:
       - cluster
       - job
       - instance
+
+  # When a MetalLB critical alert fires, suppress the warning for the same target.
+  - source_match:
+      severity: critical
+    source_match_re:
+      group_name: ^metallb-.+$
+    target_match:
+      severity: warning
+    target_match_re:
+      group_name: ^metallb-.+$
+    equal:
+      - cluster
+      - job
+      - instance
+      - namespace
+      - component
+      - name
+      - service
 
   # When a blackbox critical alert fires, suppress the warning for the same target.
   - source_match:
