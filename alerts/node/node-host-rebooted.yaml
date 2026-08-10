@@ -4,7 +4,7 @@ additionalPrometheusRulesMap:
       - name: node-host-rebooted
         rules:
           - alert: node-host-rebooted-critical
-            expr: node_boot_time_seconds > node_boot_time_seconds offset 3m
+            expr: changes(node_boot_time_seconds[1h]) > 0
             for: 0m
             labels:
               severity: critical
@@ -12,7 +12,7 @@ additionalPrometheusRulesMap:
               node_hostname: '{{ $labels.k8s_node_name }}'
             annotations:
               description: >-
-                Host {{ $labels.k8s_node_name }} has rebooted recently. Additional labels: {{ $labels }}
+                Host {{ $labels.k8s_node_name }} has rebooted recently. Additional labels: {{ $labels }}.
               runbook_url: default_runbook_url
               summary: "Node {{ $labels.k8s_node_name }} rebooted"
               dashboard_url: default_dashboard_url
