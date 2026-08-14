@@ -1,0 +1,111 @@
+---
+# Alerts built on the structured summary lines flex-billing emits at the end of
+# every run. See the Logging section of the flex-billing README for the field
+# reference and the reasoning behind the queries.
+#
+# These complement alerts/billing/flex-billing-job-failure.yaml, which watches
+# kube_cronjob_status_last_successful_time and needs 13h to fire. These read the
+# billing outcome itself rather than inferring it from the process exit status.
+groups:
+  - name: flex-billing-delivery
+    # 30m rather than the 1m used elsewhere in this tree. Events are sent once a
+    # day at 00:30; the 12:30 run bills the same window again, so it is normally
+    # all duplicates and exists as a fail-safe that occasionally delivers events
+    # missed earlier. Against that cadence, sub-hourly detection is ample, and
+    # the 5d ranges below mean a tighter interval would rescan days of
+    # DEBUG-level logs dozens of times per hour for nothing.
+    interval: 30m
+    rules:
+      # A billing window was processed but never successfully billed.
+      #
+      # Grouped by window_start -- the day being billed -- rather than by a
+      # clock offset. That matters: both daily runs process the same window, so
+      # grouping this way means a 00:30 failure rescued by the 12:30 fail-safe
+      # never fires, while a window that no run ever completed stays flagged for
+      # the full 5 days even if later days are healthy. Sliding time buckets
+      # cannot express that, because a bucket straddling the successes either
+      # side of a bad day masks it. Loki has no subquery support, so the
+      # "was there ever a gap" phrasing is not available either.
+      #
+      # Only labels that are invariant across every run of a window may appear
+      # in the `by` clause. datacenter qualifies and is worth carrying, since
+      # nothing else in the result identifies the environment. Do NOT add
+      # outcome, events_failed or anything else that varies per run: `unless`
+      # matches on the whole label set, so a partial run would stop being
+      # cancelled by the successful one and the alert would fire on every window
+      # that had any failure, rescued or not. Per-run detail belongs in the
+      # query the annotation hands the operator, not in the labels.
+      #
+      # `unless` is doing the work: the left side is every window that had runs,
+      # the right side is every window that had a *successful* run, and the
+      # difference is windows that were attempted and never landed. It also
+      # gives the no-data case for free -- if nothing logged at all, both sides
+      # are empty and nothing fires, so a logging outage or a fresh deploy with
+      # no history stays quiet rather than alerting on absence.
+      #
+      # Clears when a run succeeds for that window, which is the only thing that
+      # genuinely fixes it: either the fail-safe run, a backoffLimit retry, or a
+      # manual `flex-billing --date <window>` backfill.
+      #
+      # 409 responses are duplicate events, counted as events_duplicate and not
+      # as failures, so the 12:30 fail-safe run reports outcome=ok and satisfies
+      # the right side. Do not rewrite this against delivery_status_class: that
+      # run is legitimately 100% 4xx on a completely healthy day.
+      - alert: flex-billing-window-unbilled
+        expr: |
+          count by (window_start, datacenter) (
+            count_over_time(
+              {app="flex-billing", namespace="flex-billing"}
+              |= "billing_run_summary:"
+              | regexp "billing_run_summary: (?P<payload>.*)$"
+              | line_format "{{.payload}}"
+              | json
+              | __error__ = ""
+              | dryrun = "false"
+              [5d]
+            )
+          )
+          unless
+          count by (window_start, datacenter) (
+            count_over_time(
+              {app="flex-billing", namespace="flex-billing"}
+              |= "billing_run_summary:"
+              | regexp "billing_run_summary: (?P<payload>.*)$"
+              | line_format "{{.payload}}"
+              | json
+              | __error__ = ""
+              | dryrun = "false"
+              | outcome = "ok"
+              [5d]
+            )
+          )
+        for: 0m
+        labels:
+          severity: critical
+          service: billing
+          component: flex-billing
+          group_name: flex-billing-delivery
+          correlation_key: cronjob/flex-billing/flex-billing-cronjob
+          correlation_scope: cronjob
+        annotations:
+          summary: >-
+            flex-billing never billed usage window
+            {{ $labels.window_start }} in {{ $labels.datacenter }}
+          description: >-
+            No successful flex-billing run has billed the usage window starting
+            {{ $labels.window_start }} in {{ $labels.datacenter }}. {{ $value }}
+            run(s) attempted that window and every one reported an outcome other
+            than ok, so the day's usage may never have reached Cloud Feeds;
+            outcome=partial means events failed delivery to every required
+            AtomHopper endpoint and the run exited 3, outcome=failed means it
+            aborted and exited 2. For the per-product breakdown run:
+            logcli-parallel --since=120h '{app="flex-billing"} |=
+            "billing_summary_" |= "{{ $labels.window_start }}"' and read
+            events_failed, delivery_status and atomhopper on each product line.
+            Note that 409 responses are duplicate events rather than failures
+            and never contribute to this alert. Re-running the window with
+            flex-billing --date once the cause is fixed will clear this alert;
+            it otherwise keeps firing for 5 days even if later windows bill
+            cleanly.
+          runbook_url: default_runbook_url
+          dashboard_url: default_dashboard_url
