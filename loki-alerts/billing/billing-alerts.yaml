@@ -4,7 +4,16 @@
 # product. Field reference is in the Logging section of the flex-billing README.
 #
 # Complements alerts/billing/flex-billing-job-failure.yaml, which infers health
-# from kube_cronjob_status_last_successful_time and needs 13h to fire.
+# from kube_cronjob_status_last_successful_time and needs 13h to fire. That one
+# is the only thing watching whether the *schedule* fired at all -- these read
+# the billing outcome, which a manually triggered run satisfies just as well as
+# a scheduled one.
+#
+# SCHEMA GATE: every rule requires completed or run_completed to be present.
+# Those fields arrived in v1.2.17 without a SCHEMA_VERSION bump (additions do
+# not bump it), so the version cannot distinguish the two shapes and field
+# presence has to. Without the gate, windows billed by an older image would
+# look like windows nothing ever completed.
 groups:
   - name: flex-billing-delivery
     # 30m, not the 1m used elsewhere here: events go out once daily at 00:30
@@ -12,26 +21,113 @@ groups:
     # tighter evaluation only rescans days of DEBUG logs.
     interval: 30m
     rules:
-      # ALERT: a usage window had runs but none succeeded -- that day's usage
-      # may never have reached Cloud Feeds. Critical.
+      # ALERT: one product's events for one window never reached Cloud Feeds.
+      # Critical -- that day's usage for that product is unbilled.
       #
-      # MATH: windows with runs, minus windows with a *successful* run, over 5d.
-      # Grouped by window_start so both daily runs count toward the same window,
-      # meaning a 00:30 failure rescued by the 12:30 fail-safe never fires, and
-      # a window nothing ever completed stays flagged for the full 5d even once
-      # later days are healthy. Clears only when a run succeeds for that window.
-      # `unless` also keeps it quiet when nothing logged at all, so a logging
-      # outage or a fresh deploy does not alert on absence.
+      # MATH: events_failed from the most recent completed, non-dryrun run for
+      # each (window, product), alerting when it is above zero. last_over_time
+      # rather than a count of failing runs, so $value is the number of events
+      # actually outstanding rather than the number of times we tried.
       #
-      # Do not group by per-run fields (outcome, events_failed): `unless`
-      # matches the whole label set, so a partial run would stop being cancelled
-      # by the successful one. Do not use delivery_status_class either -- the
-      # 12:30 run is legitimately 100% 4xx, since 409 means already delivered.
-      # Sliding time buckets cannot work here: one straddling the successes on
-      # either side of a bad day masks it, and Loki has no subqueries.
+      # Verified in DFW-DEV that `by (window_date, datacenter, product)` reduces
+      # to exactly those three labels -- hostname and run_id do not survive the
+      # grouping -- so one series per product per window.
+      #
+      # NO `unless` NEEDED, unlike the run-level rule below. last_over_time
+      # already means "as things currently stand": a later successful run for
+      # the same window reports events_failed=0 and becomes the last sample, so
+      # the alert clears on its own. A product-scoped backfill only emits its
+      # own product's line, so it clears that product and leaves the others
+      # firing, which is the whole point of grouping by product.
+      #
+      # The completed gate is what makes that safe. Summary lines are emitted
+      # from a finally, and outcome/events_failed only describe events that were
+      # actually attempted, so a run that died part-way through a product
+      # reports zero failures for it. Without the gate that aborted line would
+      # become the last word and silently clear a window that is still owed.
+      #
+      # 409 responses are duplicate events, counted as events_duplicate and not
+      # as failures, so the 12:30 fail-safe and any re-run of an already-billed
+      # window report events_failed=0. Do not rewrite this against
+      # delivery_status_class: those runs are legitimately 100% 4xx.
       - alert: flex-billing-window-unbilled
         expr: |
-          count by (window_start, datacenter) (
+          last_over_time(
+            {app="flex-billing", namespace="flex-billing"}
+            |= "billing_summary_"
+            | regexp "billing_summary_[a-z]+: (?P<payload>.*)$"
+            | line_format "{{.payload}}"
+            | json
+            | dryrun = "false"
+            | completed = "true"
+            | unwrap events_failed
+            | __error__ = ""
+            [5d]
+          ) by (window_date, datacenter, product) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: billing
+          component: flex-billing
+          group_name: flex-billing-delivery
+          # Static, and shared with every other flex-billing alert. The
+          # convention in this repo is that the key names the affected resource
+          # rather than the alert, so all products and all windows correlate to
+          # one ticket for the cronjob. Interpolating product here would split
+          # them into a ticket each.
+          correlation_key: cronjob/flex-billing/flex-billing-cronjob
+          correlation_scope: cronjob
+        annotations:
+          summary: >-
+            {{ $value | printf "%.0f" }} {{ $labels.product }} event(s) failed
+            delivery for {{ $labels.window_date }} in {{ $labels.datacenter }}
+          description: >-
+            {{ $value | printf "%.0f" }} {{ $labels.product }} event(s) for the
+            {{ $labels.window_date }} window in {{ $labels.datacenter }} failed
+            delivery to every required AtomHopper endpoint, as of the most
+            recent completed run for that window. That usage has not reached
+            Cloud Feeds. This is one product inside a run that otherwise
+            finished -- other products in the same run may have billed
+            normally, and each affected product raises its own alert, so this is
+            not a whole-run failure. For how many events did land, read the
+            product summary line: logcli-parallel --since=120h
+            '{app="flex-billing"} |= "billing_summary_{{ $labels.product }}:"
+            |= "{{ $labels.window_date }}"' and compare events_failed against
+            events_sent, events_duplicate and events_attempted.
+            events_failed_permanent is the subset that was rejected outright
+            rather than merely undelivered. Diagnose before re-billing: a
+            permanent rejection will be rejected again unchanged, and a re-run
+            costs a full pass over Gnocchi. 409 responses are duplicates rather
+            than failures and never contribute to this alert.
+          runbook_url: https://github.com/rackerlabs/flex-billing
+          dashboard_url: default_dashboard_url
+      # ALERT: no run for a window ever finished its product loop. Critical.
+      #
+      # MATH: windows that had runs, minus windows where a run set
+      # run_completed, over 5d.
+      #
+      # This exists because a product the run never reached emits no summary
+      # line at all, so the per-product rule above is structurally blind to it:
+      # there is nothing to attach a failure count to. The set of unbilled
+      # products is therefore unknowable from telemetry and this cannot be
+      # reported per product.
+      #
+      # `unless` rather than last_over_time, because the condition is an absence
+      # and there is no numeric field that says "aborted". It also gives the
+      # no-data case for free: if nothing logged at all, both sides are empty
+      # and nothing fires, so a logging outage or a fresh deploy stays quiet.
+      #
+      # Do not group by per-run fields (outcome, run_completed): `unless`
+      # matches the whole label set, so an aborted run would stop being
+      # cancelled by the completed one and this would fire on every window that
+      # had any aborted attempt, rescued or not.
+      #
+      # The two sides deliberately differ only in that filter. run_completed !=
+      # "" on the left is the schema gate described at the top of this file; it
+      # must stay on both sides or old-image runs will fire this permanently.
+      - alert: flex-billing-run-incomplete
+        expr: |
+          count by (window_date, datacenter) (
             count_over_time(
               {app="flex-billing", namespace="flex-billing"}
               |= "billing_run_summary:"
@@ -40,11 +136,12 @@ groups:
               | json
               | __error__ = ""
               | dryrun = "false"
+              | run_completed != ""
               [5d]
             )
           )
           unless
-          count by (window_start, datacenter) (
+          count by (window_date, datacenter) (
             count_over_time(
               {app="flex-billing", namespace="flex-billing"}
               |= "billing_run_summary:"
@@ -53,7 +150,7 @@ groups:
               | json
               | __error__ = ""
               | dryrun = "false"
-              | outcome = "ok"
+              | run_completed = "true"
               [5d]
             )
           )
@@ -67,43 +164,54 @@ groups:
           correlation_scope: cronjob
         annotations:
           summary: >-
-            flex-billing never billed usage window
-            {{ $labels.window_start }} in {{ $labels.datacenter }}
+            flex-billing runs for {{ $labels.window_date }} in
+            {{ $labels.datacenter }} all aborted before finishing
           description: >-
-            No successful flex-billing run has billed the usage window starting
-            {{ $labels.window_start }} in {{ $labels.datacenter }}. {{ $value }}
-            run(s) attempted that window and every one reported an outcome other
-            than ok, so the day's usage may never have reached Cloud Feeds;
-            outcome=partial means events failed delivery to every required
-            AtomHopper endpoint and the run exited 3, outcome=failed means it
-            aborted and exited 2. For the per-product breakdown run:
-            logcli-parallel --since=120h '{app="flex-billing"} |=
-            "billing_summary_" |= "{{ $labels.window_start }}"' and read
-            events_failed, delivery_status and atomhopper on each product line.
-            Note that 409 responses are duplicate events rather than failures
-            and never contribute to this alert. Re-running the window with
-            flex-billing --date once the cause is fixed will clear this alert;
-            it otherwise keeps firing for 5 days even if later windows bill
-            cleanly.
-          runbook_url: default_runbook_url
+            No flex-billing run for the {{ $labels.window_date }} window in
+            {{ $labels.datacenter }} reached the end of its product loop;
+            {{ $value | printf "%.0f" }} run(s) attempted it and every one
+            aborted. Unlike flex-billing-window-unbilled this is a whole-run
+            failure rather than a single product. A product the run never
+            reached emits no summary line at all, so which products went
+            unbilled cannot be determined from telemetry and cannot be reported
+            per product. Establish how far it got from products and
+            products_disabled on the billing_run_summary line, then find the
+            cause: logcli-parallel --since=120h '{app="flex-billing"} |=
+            "{{ $labels.window_date }}"'. Exit 2 means the run aborted; 137 is
+            an OOM kill and leaves no traceback. Fix the cause before
+            considering a re-run.
+          runbook_url: https://github.com/rackerlabs/flex-billing
           dashboard_url: default_dashboard_url
 
-      # ALERT: a product's billable resource count fell below 70% of its own
+      # ALERT: a product's billable resource count fell below 40% of its own
       # trailing 7-day average. Warning -- delivery is fine, this catches
       # billing less than we should, which no job-level check can see.
       #
       # MATH: mean resources_attempted over 24h / mean over the 7d before that.
       # That field is used because both daily runs report the same value, while
-      # events_sent collapses to 0 on the fail-safe run by design. As a ratio,
+      # events_sent collapses to 0 on the fail-safe run by design -- confirmed
+      # in DFW-DEV, where every re-run of an already-billed window reports
+      # events_sent=0 with events_duplicate carrying the count. As a ratio,
       # $value is the ratio itself, and division makes thin data safe: x/0 and
       # 0/0 both fail the comparison, so a product with no history cannot fire.
       #
-      # THRESHOLDS: ratio < 0.7, and a floor requiring the baseline above 5
+      # THRESHOLDS: ratio < 0.4, so it takes a 60% drop to fire. Deliberately
+      # insensitive -- the cost is that a product losing half its resources
+      # (ratio 0.5) stays quiet. Plus a floor requiring the baseline above 5
       # resources, since percentages are meaningless on single digits where
       # 3 -> 2 is a 33% drop. The floor tests the baseline, not today, so a
       # product collapsing to zero is still caught; products under 5 get no
-      # coverage at all. Tune the floor first per environment. product is safe
-      # to group by here -- a comparison, not an `unless`, so nothing cancels.
+      # coverage at all. In DFW-DEV loadbalancer sits at 1 and several others in
+      # single digits, so dev exercises this rule for almost nothing. Tune the
+      # floor first per environment. product is safe to group by here -- a
+      # comparison, not an `unless`, so nothing cancels.
+      #
+      # invocation = "default" restricts the trend to scheduled runs. Backfills
+      # are timestamped when they ran rather than for the window they bill, so
+      # including them would land extra samples in whichever side of the
+      # comparison happened to be open. Manually triggered runs of the normal
+      # cronjob also report invocation=default, which is correct: they do the
+      # same work over the same window and belong in the trend.
       - alert: flex-billing-product-volume-drop
         expr: |
           (
@@ -114,6 +222,8 @@ groups:
               | line_format "{{.payload}}"
               | json
               | dryrun = "false"
+              | completed = "true"
+              | invocation = "default"
               | unwrap resources_attempted
               | __error__ = ""
               [24h]
@@ -126,11 +236,13 @@ groups:
               | line_format "{{.payload}}"
               | json
               | dryrun = "false"
+              | completed = "true"
+              | invocation = "default"
               | unwrap resources_attempted
               | __error__ = ""
               [7d] offset 24h
             ) by (product, datacenter)
-          ) < 0.7
+          ) < 0.4
           and
           avg_over_time(
             {app="flex-billing", namespace="flex-billing"}
@@ -139,6 +251,8 @@ groups:
             | line_format "{{.payload}}"
             | json
             | dryrun = "false"
+            | completed = "true"
+            | invocation = "default"
             | unwrap resources_attempted
             | __error__ = ""
             [7d] offset 24h
@@ -168,7 +282,9 @@ groups:
             "billing_summary_{{ $labels.product }}:"' and read resources_examined
             against resources_attempted. If examined held steady while attempted
             fell, the resources are being filtered rather than deleted, which
-            points at a bug rather than churn. Delivery is unaffected, so this is
-            a billing accuracy signal rather than an outage.
-          runbook_url: default_runbook_url
+            points at a bug rather than churn. Only unscoped scheduled runs
+            contribute to the trend, so backfills do not skew it. Delivery is
+            unaffected, so this is a billing accuracy signal rather than an
+            outage.
+          runbook_url: https://github.com/rackerlabs/flex-billing
           dashboard_url: default_dashboard_url
