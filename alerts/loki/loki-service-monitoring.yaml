@@ -1,0 +1,108 @@
+additionalPrometheusRulesMap:
+  loki-service-monitoring:
+    groups:
+      - name: loki-query-health
+        interval: 1m
+        rules:
+          - alert: loki-query-scheduler-no-queriers
+            expr: |
+              max by (cluster, namespace) (
+                {__name__=~"(loki|cortex)_query_scheduler_connected_querier_clients"}
+              ) == 0
+            for: 2m
+            labels:
+              severity: critical
+              group_name: loki-query
+            annotations:
+              summary: "Loki query scheduler has no queriers connected"
+              description: >-
+                No Loki queriers are connected to any query scheduler in
+                {{ $labels.cluster }}. The Loki read path cannot execute queries.
+          - alert: loki-query-scheduler-no-frontends
+            expr: |
+              max by (cluster, namespace) (
+                {__name__=~"(loki|cortex)_query_scheduler_connected_frontend_clients"}
+              ) == 0
+            for: 2m
+            labels:
+              severity: critical
+              group_name: loki-query
+            annotations:
+              summary: "Loki query scheduler has no query frontends connected"
+              description: >-
+                No Loki query frontends are connected to any query scheduler in
+                {{ $labels.cluster }}. Query requests cannot be dispatched through
+                the normal Loki read path.
+          - alert: loki-query-5xx-high
+            expr: |
+              (
+                (
+                  100 *
+                  sum by (cluster, namespace, job, route) (
+                    rate(
+                      loki_request_duration_seconds_count{
+                        status_code=~"5..",
+                        route=~"api_prom_query|loki_api_v1_query|loki_api_v1_query_range"
+                      }[5m]
+                    )
+                  )
+                  /
+                  sum by (cluster, namespace, job, route) (
+                    rate(
+                      loki_request_duration_seconds_count{
+                        route=~"api_prom_query|loki_api_v1_query|loki_api_v1_query_range"
+                      }[5m]
+                    )
+                  )
+                ) > 20
+              )
+              and
+              (
+                sum by (cluster, namespace, job, route) (
+                  increase(
+                    loki_request_duration_seconds_count{
+                      route=~"api_prom_query|loki_api_v1_query|loki_api_v1_query_range"
+                    }[5m]
+                  )
+                ) >= 10
+              )
+            for: 3m
+            labels:
+              severity: critical
+              group_name: loki-query
+            annotations:
+              summary: "Loki query API has a high 5xx error rate"
+              description: >-
+                More than 20% of Loki query requests to {{ $labels.route }} on
+                {{ $labels.job }} are returning 5xx responses in
+                {{ $labels.cluster }}.
+          - alert: loki-canary-missing-entries
+            expr: |
+              sum by (cluster, namespace) (
+                increase(loki_canary_missing_entries_total[15m])
+              ) > 0
+            for: 1m
+            labels:
+              severity: warning
+              group_name: loki-query
+            annotations:
+              summary: "Loki canary has confirmed missing log entries"
+              description: >-
+                Loki Canary in {{ $labels.cluster }} has confirmed one or more log
+                entries missing during the last 15 minutes after exhausting its
+                normal query retry period.
+          - alert: loki-canary-spot-check-missing-entries
+            expr: |
+              sum by (cluster, namespace) (
+                increase(loki_canary_spot_check_missing_entries_total[15m])
+              ) > 0
+            for: 2m
+            labels:
+              severity: warning
+              group_name: loki-query
+            annotations:
+              summary: "Loki canary cannot retrieve persisted entries"
+              description: >-
+                Loki Canary spot checks in {{ $labels.cluster }} are failing to
+                retrieve previously stored log entries. This can indicate an
+                object-store or persisted-read-path problem.
