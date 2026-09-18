@@ -1,2 +1,3 @@
-# genestack-monitoring
-Houses alerts, recording rules, dashboards and other monitoring related items
+# Genestack Observability
+
+The place for all things Genestack monitoring and observability! 
