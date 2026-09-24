@@ -8,8 +8,8 @@ SERVICE_NAMESPACE="monitoring"
 GENESTACK_BASE_DIR="${GENESTACK_BASE_DIR:-/opt/genestack}"
 GENESTACK_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR:-/etc/genestack}"
 
-CHART_DIR="${GENESTACK_BASE_DIR}/base-helm-configs/monitoring/${CHART_DIR_NAME}"
-SERVICE_CUSTOM_OVERRIDES="${GENESTACK_OVERRIDES_DIR}/helm-configs/monitoring/${CHART_DIR_NAME}"
+CHART_DIR="${GENESTACK_BASE_DIR}/base-helm-configs/observability/${CHART_DIR_NAME}"
+SERVICE_CUSTOM_OVERRIDES="${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/${CHART_DIR_NAME}"
 GLOBAL_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR}/helm-configs/global_overrides"
 
 source "$(dirname "$0")/monitoring-common.sh"

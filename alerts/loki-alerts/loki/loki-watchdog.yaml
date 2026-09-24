@@ -1,3 +1,5 @@
+namespace: genestack-loki-watchdog
+
 groups:
   - name: loki-watchdog
     interval: 1m

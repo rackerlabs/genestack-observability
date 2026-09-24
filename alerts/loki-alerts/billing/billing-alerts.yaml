@@ -1,4 +1,6 @@
 ---
+namespace: genestack-flex-billing
+
 # Alerts on the structured summary lines flex-billing emits at the end of every
 # run: billing_run_summary: once per run, billing_summary_<product>: per
 # product. Field reference is in the Logging section of the flex-billing README.

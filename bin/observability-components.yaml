@@ -1,0 +1,30 @@
+---
+# Observability components installed by bin/install-observability.sh.
+
+components:
+  monitoring-rgw-storage: false
+  kube-prometheus-stack: true
+  prometheus-pushgateway: true
+  barbican-exporter: true
+  openstack-exporter: true
+  tempo: false
+  loki: true
+  opentelemetry-kube-stack: true
+  grafana: true
+  prometheus-rules: true
+  loki-rules: true
+
+# Installation order is explicit so dependency ordering does not depend on YAML
+# map ordering. Add new observability components here when they gain an installer.
+install_order:
+  - monitoring-rgw-storage
+  - kube-prometheus-stack
+  - prometheus-pushgateway
+  - barbican-exporter
+  - openstack-exporter
+  - loki
+  - opentelemetry-kube-stack
+  - grafana
+  - prometheus-rules
+  - loki-rules
+  - tempo

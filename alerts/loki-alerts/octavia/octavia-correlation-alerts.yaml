@@ -1,0 +1,65 @@
+namespace: genestack-octavia-correlation
+
+groups:
+  - name: octavia-correlation-alerts
+    interval: 1m
+    rules:
+      - alert: OpenStackNeutronErrorsDuringOctaviaFailovers
+        expr: |
+          (
+            sum by (cluster) (
+              count_over_time(
+                {application=~"neutron.*"}
+                |~ "(?i)(ERROR|CRITICAL|Timeout|No route to host|Connection refused|PortBinding|binding failed|OVN|OVS|DHCP|L3 agent)"
+                [10m]
+              )
+            ) > 10
+          )
+          and
+          (
+            sum by (cluster) (
+              count_over_time(
+                {container=~"octavia-health-manager"}
+                |= "Stale amphora's id is:"
+                [10m]
+              )
+            ) > 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+          service: openstack
+          component: neutron-octavia
+        annotations:
+          summary: "Neutron errors correlated with Octavia stale amphorae"
+          description: "Neutron errors and Octavia stale amphora events are occurring in the same 10-minute window. Focus on lb-mgmt-net, provider networks, OVN/OVS, DHCP/L3 agents, port binding, and security groups."
+
+      - alert: OpenStackNovaErrorsDuringOctaviaFailovers
+        expr: |
+          (
+            sum by (cluster) (
+              count_over_time(
+                {application=~"nova.*"}
+                |~ "(?i)(ERROR|CRITICAL|NoValidHost|BuildAbortException|Instance failed|Timeout|Connection refused|libvirt|compute.*down)"
+                [10m]
+              )
+            ) > 10
+          )
+          and
+          (
+            sum by (cluster) (
+              count_over_time(
+                {container=~"octavia-health-manager"}
+                |= "Stale amphora's id is:"
+                [10m]
+              )
+            ) > 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+          service: openstack
+          component: nova-octavia
+        annotations:
+          summary: "Nova errors correlated with Octavia failovers"
+          description: "Nova errors and Octavia stale amphora/failover activity are happening together. Check compute hosts, scheduling, amphora image/flavor, libvirt, and instance build/delete operations."

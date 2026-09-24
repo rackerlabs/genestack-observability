@@ -1,0 +1,2 @@
+prometheus:
+  releaseLabel: kube-prometheus-stack

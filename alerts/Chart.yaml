@@ -1,0 +1,5 @@
+apiVersion: v2
+name: genestack-prometheus-rules
+description: Genestack Prometheus alerting and recording rules
+type: application
+version: 0.1.0

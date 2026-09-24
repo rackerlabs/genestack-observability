@@ -1,0 +1,4 @@
+[submodule "submodules/openstack-exporter"]
+	path = submodules/openstack-exporter
+	url = https://github.com/openstack-exporter/helm-charts
+	ignore = all

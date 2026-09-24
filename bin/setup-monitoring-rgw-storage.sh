@@ -136,10 +136,10 @@ create_rgw_user() {
 
 write_override_files() {
     mkdir -p \
-        "${GENESTACK_OVERRIDES_DIR}/helm-configs/loki" \
-        "${GENESTACK_OVERRIDES_DIR}/helm-configs/tempo"
+        "${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/loki" \
+        "${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/tempo"
 
-    cat > "${GENESTACK_OVERRIDES_DIR}/helm-configs/loki/20-rook-rgw-overrides.yaml" <<EOF
+    cat > "${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/loki/20-rook-rgw-overrides.yaml" <<EOF
 ---
 loki:
   storage:
@@ -166,7 +166,7 @@ loki:
           period: 24h
 EOF
 
-    cat > "${GENESTACK_OVERRIDES_DIR}/helm-configs/tempo/20-rook-rgw-overrides.yaml" <<EOF
+    cat > "${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/tempo/20-rook-rgw-overrides.yaml" <<EOF
 tempo:
   storage:
     trace:
