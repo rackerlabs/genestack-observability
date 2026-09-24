@@ -85,6 +85,7 @@ The relevant observability layout is:
 ├── bin/
 │   ├── bootstrap-observability.sh
 │   ├── install-observability.sh
+│   ├── create-secrets.sh
 │   ├── install-barbican-exporter.sh
 │   ├── install-grafana.sh
 │   ├── install-kube-prometheus-stack.sh
@@ -155,6 +156,58 @@ The resulting paths are:
 
 The bootstrap script refuses to replace an existing non-symlink path at either
 target.
+
+
+## Secret ownership
+
+Secrets are split along the same repository boundary as the deployment code.
+
+Core Genestack continues to own OpenStack and infrastructure credentials in:
+
+```text
+/etc/genestack/kubesecrets.yaml
+```
+
+Generate them with:
+
+```bash
+/opt/genestack/bin/create-secrets.sh
+```
+
+`genestack-observability` owns observability-specific manifests in:
+
+```text
+/etc/genestack/observability-secrets.yaml
+```
+
+These include the `monitoring` namespace manifest, the `mariadb-monitoring`
+Secret used by observability collectors, and the OpenStack exporter
+authentication Secret. The exporter
+Secret reuses the existing Keystone admin password instead of generating a new
+OpenStack credential.
+
+Normal observability bootstrap runs the observability secret generator before
+installing enabled components:
+
+```bash
+/opt/genestack/bin/bootstrap-observability.sh
+```
+
+To only reconcile the repository/bootstrap wiring and generate observability
+secrets, without installing components:
+
+```bash
+/opt/genestack/bin/bootstrap-observability.sh --create-secrets
+```
+
+To bootstrap/install without running observability secret generation:
+
+```bash
+/opt/genestack/bin/bootstrap-observability.sh --skip-create-secrets
+```
+
+The core Genestack secret generator should be run first on a new environment so
+`keystone-admin` is available for the OpenStack exporter Secret.
 
 ## Component enablement
 
@@ -629,3 +682,6 @@ genestack-observability
 /opt/genestack/base-kustomize/observability
   Stable integration paths into genestack-observability.
 ```
+
+
+`monitoring-common.sh` is responsible for ensuring required monitoring Secrets are present in the consuming namespaces; it does not own or generate the `mariadb-monitoring` password.
