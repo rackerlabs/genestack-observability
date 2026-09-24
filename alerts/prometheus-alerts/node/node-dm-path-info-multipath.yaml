@@ -3,41 +3,144 @@ additionalPrometheusRulesMap:
     groups:
     - name: node-dm-path-info-multipath
       rules:
-      - alert: node-dm-path-info-multipath-warning
+
+      # ROOT WARNING (NOT sent to poundcake)
+      # Alertmanager routes severity=warning to all_alerts_receiver and
+      # msteams_config only. Poundcake receiver requires severity=critical.
+      # Kept for visibility in Grafana/msteams - no CORE ticket created.
+      # No correlation labels needed - poundcake never receives this alert.
+      - alert: node-dm-path-info-multipath-root-warning
         expr: |
           count by (k8s_node_name) (
             node_dmpath_info{path_checker_state!~"active|ready"}
           ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          group_name: node-dm-path-info-multipath
+          node_hostname: '{{ $labels.k8s_node_name }}'
+          node: '{{ $labels.k8s_node_name }}'
+          device: '{{ $labels.k8s_node_name }}'
+        annotations:
+          summary: >-
+            {{ $value }} multipathd path(s) NOT active|ready on node
+            {{ $labels.k8s_node_name }}
+          description: >-
+            {{ $value }} multipath path(s) are NOT active|ready on node
+            {{ $labels.k8s_node_name }}. This warning alert fires after 1m.
+          runbook_url: default_runbook_url
+          dashboard_url: default_dashboard_url
+
+      # PER-PATH WARNING (NOT sent to poundcake)
+      # Same routing as root warning - all_alerts_receiver and msteams only.
+      # No correlation labels needed - poundcake never receives this alert.
+      - alert: node-dm-path-info-multipath-warning
+        expr: node_dmpath_info{path_checker_state!~"active|ready"}
         for: 2m
         labels:
           severity: warning
           group_name: node-dm-path-info-multipath
           node_hostname: '{{ $labels.k8s_node_name }}'
-          coreaccountid: '{{ $labels.rackspace_com_coreAccountID }}'
-          coredeviceid: '{{ $labels.rackspace_com_coreDeviceID }}'
           node: '{{ $labels.k8s_node_name }}'
         annotations:
+          summary: >-
+            instance={{ $labels.instance }}
+            interface_ip={{ $labels.interface_ip }}
+            dm_dev={{ $labels.dm_dev }}
+            multipath_id={{ $labels.multipath_id }}
           description: >-
-            {{ $value }} multipath path(s) are NOT active|ready on node {{ $labels.k8s_node_name }}. This warning alert fires after 2m.
+            Path dm_dev={{ $labels.dm_dev }}
+            multipath_id={{ $labels.multipath_id }}
+            volume_id={{ $labels.volume_id }}
+            on node {{ $labels.k8s_node_name }}
+            instance={{ $labels.instance }}
+            interface_ip={{ $labels.interface_ip }}.
+            This warning alert fires after 2m.
           runbook_url: default_runbook_url
-          summary: Multipathd paths are NOT active|ready and paths are likely orphaned
           dashboard_url: default_dashboard_url
-      - alert: node-dm-path-info-multipath-critical
+
+      # ROOT CRITICAL (1 per node - creates 1 CORE ticket)
+      # count by (k8s_node_name) -> 1 series per node -> 1 fingerprint
+      # -> 1 Order -> 1 CORE ticket regardless of how many paths are unhealthy.
+      #
+      # LABELS (static - safe for Prometheus fingerprinting):
+      #   dispatch_delay_sec:     max grace backstop (600s = 10 min)
+      #   dispatch_min_wait_sec:  mandatory minimum wait before checking
+      #                           children (90s = 60s delta + 30s group_wait)
+      #   root_cause: 'true'      -> poundcake creates parent Order
+      #   correlation_key         -> links root to per-path children
+      #
+      # ANNOTATIONS (dynamic - captured at fire time, NOT in fingerprint):
+      #   expected_child_count: '{{ $value }}'
+      #     MUST be annotation, NOT label. $value = count of unhealthy paths
+      #     and can fluctuate between Prometheus evaluations. If placed in
+      #     labels, a fluctuation (e.g. 440->439) changes the fingerprint ->
+      #     Prometheus treats it as a new alert -> for: timer resets ->
+      #     alert may never fire or fire multiple times.
+      - alert: node-dm-path-info-multipath-root-critical
         expr: |
           count by (k8s_node_name) (
             node_dmpath_info{path_checker_state!~"active|ready"}
           ) > 0
+        for: 4m
+        labels:
+          severity: critical
+          group_name: node-dm-path-info-multipath
+          node_hostname: '{{ $labels.k8s_node_name }}'
+          node: '{{ $labels.k8s_node_name }}'
+          device: '{{ $labels.k8s_node_name }}'
+          root_cause: 'true'
+          correlation_key: 'node-multipath-critical/{{ $labels.k8s_node_name }}'
+          dispatch_delay_sec: '600'
+          dispatch_min_wait_sec: '90'
+        annotations:
+          summary: >-
+            {{ $value }} multipathd path(s) NOT active|ready on node
+            {{ $labels.k8s_node_name }}
+          description: >-
+            {{ $value }} multipath path(s) are NOT active|ready on node
+            {{ $labels.k8s_node_name }}. This critical alert fires after 4m.
+          expected_child_count: '{{ $value }}'
+          runbook_url: default_runbook_url
+          dashboard_url: default_dashboard_url
+
+      # PER-PATH CRITICAL (child - 0 new tickets)
+      # Fires at for: 5m - AFTER root critical (for: 4m).
+      # Root Order already exists in poundcake when children arrive.
+      # correlation_key matches root -> _find_active_root_parent() finds it
+      # -> _attach_child_alert() -> stored in raw_data.correlation.children
+      # -> 0 new tickets created.
+      #
+      # summary annotation contains all per-path/per-volume fields:
+      #   instance, interface_ip, dm_dev, multipath_id
+      # These are rendered as "Affected Paths" in the CORE ticket by
+      # bakery/formatters.py (OSPC-1770 fix).
+      #
+      # No dispatch_delay_sec - per-path children are never dispatched
+      # independently; they only attach to the root Order.
+      - alert: node-dm-path-info-multipath-critical
+        expr: node_dmpath_info{path_checker_state!~"active|ready"}
         for: 5m
         labels:
           severity: critical
           group_name: node-dm-path-info-multipath
           node_hostname: '{{ $labels.k8s_node_name }}'
-          coreaccountid: '{{ $labels.rackspace_com_coreAccountID }}'
-          coredeviceid: '{{ $labels.rackspace_com_coreDeviceID }}'
           node: '{{ $labels.k8s_node_name }}'
+          correlation_key: 'node-multipath-critical/{{ $labels.k8s_node_name }}'
+          correlation_scope: per_path
         annotations:
+          summary: >-
+            instance={{ $labels.instance }}
+            interface_ip={{ $labels.interface_ip }}
+            dm_dev={{ $labels.dm_dev }}
+            multipath_id={{ $labels.multipath_id }}
           description: >-
-            {{ $value }} multipath path(s) are NOT active|ready on node {{ $labels.k8s_node_name }}. This critical alert fires after 5m.
+            Path dm_dev={{ $labels.dm_dev }}
+            multipath_id={{ $labels.multipath_id }}
+            volume_id={{ $labels.volume_id }}
+            on node {{ $labels.k8s_node_name }}
+            instance={{ $labels.instance }}
+            interface_ip={{ $labels.interface_ip }}.
+            This critical alert fires after 5m.
           runbook_url: default_runbook_url
-          summary: Multipathd paths are NOT active|ready and paths are likely orphaned
           dashboard_url: default_dashboard_url
