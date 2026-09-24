@@ -1,0 +1,9 @@
+---
+charts:
+  barbican-exporter: 0.1.0
+  grafana: 10.1.0
+  kube-prometheus-stack: 78.3.0
+  loki: 6.52.0
+  opentelemetry-kube-stack: 0.13.1
+  prometheus-pushgateway: 3.4.2
+  tempo: 1.24.4
