@@ -55,7 +55,7 @@ fi
 
 echo "Using lokitool:"
 echo "  $(command -v lokitool)"
-lokitool --version
+lokitool version
 
 if [[ -z "${LOKI_ADDRESS}" ]]; then
     echo "Discovering Loki endpoint from HTTPRoute ${LOKI_ROUTE_NAMESPACE}/${LOKI_ROUTE_NAME}..."

@@ -41,9 +41,10 @@ case "$(uname -m)" in
 esac
 
 if command -v lokitool >/dev/null 2>&1; then
-    if lokitool --version 2>&1 | grep -Fq "${VERSION}"; then
+    if lokitool version 2>&1 | grep -Fq "${VERSION}"; then
         echo "lokitool ${VERSION} is already installed:"
         echo "  $(command -v lokitool)"
+        lokitool version
         exit 0
     fi
 
@@ -121,4 +122,4 @@ fi
 
 echo "Installed ${INSTALL_PATH}"
 
-"${INSTALL_PATH}" --version
+"${INSTALL_PATH}" version
