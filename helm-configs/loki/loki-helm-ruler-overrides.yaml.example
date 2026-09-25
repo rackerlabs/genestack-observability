@@ -1,0 +1,91 @@
+---
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+
+  # Keep the Helm chart itself in filesystem mode.
+  #
+  # Do NOT enable the chart-level Thanos switch. Chart 6.52.0's
+  # rulerThanosStorageConfig helper is designed around the chart's
+  # object-storage bucket configuration.
+  storage:
+    type: filesystem
+    use_thanos_objstore: false
+
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+
+  # Neutralize any inherited production ruler storage.
+  #
+  # This is the legacy store and is deliberately NOT the active Ruler
+  # store in this lab. Keeping it local prevents inherited S3/Swift
+  # configuration from surviving the Helm merge.
+  rulerConfig:
+    enable_api: true
+    rule_path: /var/loki/ruler-tmp
+
+    storage:
+      type: local
+      local:
+        directory: /var/loki/rules
+
+  # structuredConfig is merged into the final Loki runtime config.
+  #
+  # This enables Loki's newer object-store clients at runtime without
+  # enabling the Helm chart's bucket-oriented Thanos helper.
+  structuredConfig:
+    storage_config:
+      use_thanos_objstore: true
+
+      object_store:
+        filesystem:
+          dir: /var/loki/chunks
+
+    ruler_storage:
+      backend: filesystem
+      filesystem:
+        dir: /var/loki/ruler-store
+
+    ruler:
+      enable_api: true
+      rule_path: /var/loki/ruler-tmp
+
+ruler:
+  enabled: true
+  replicas: 0
+
+sidecar:
+  rules:
+    enabled: false
+
+singleBinary:
+  replicas: 1
+
+  persistence:
+    enabled: true
+
+read:
+  replicas: 0
+
+write:
+  replicas: 0
+
+backend:
+  replicas: 0
+
+gateway:
+  enabled: true
+
+minio:
+  enabled: false
+
+test:
+  enabled: false
+
+lokiCanary:
+  enabled: false
