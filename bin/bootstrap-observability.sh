@@ -614,6 +614,20 @@ listener_file_for_section() {
     return 1
 }
 
+gateway_listener_exists() {
+    local gateway_name="$1"
+    local gateway_namespace="$2"
+    local listener_name="$3"
+
+    command -v jq >/dev/null 2>&1 || return 1
+
+    kubectl -n "${gateway_namespace}" get gateway "${gateway_name}" -o json \
+        2>/dev/null \
+        | jq -e --arg name "${listener_name}" \
+            '.spec.listeners[]? | select(.name == $name)' \
+            >/dev/null 2>&1
+}
+
 ensure_gateway_listener() {
     local gateway_name="$1"
     local gateway_namespace="$2"
@@ -626,28 +640,35 @@ ensure_gateway_listener() {
     local patch_file
 
     command -v jq >/dev/null 2>&1 || {
-        echo "WARNING: jq is not available; cannot ensure Gateway listener from ${listener_file}"
+        echo "WARNING: jq is not available; skipping optional Gateway listener management for ${listener_file}"
         return 0
     }
 
     if ! kubectl -n "${gateway_namespace}" get gateway "${gateway_name}" \
         >/dev/null 2>&1; then
-        echo "ERROR: Gateway ${gateway_namespace}/${gateway_name} does not exist; cannot install listener from:" >&2
-        echo "  ${listener_file}" >&2
-        return 1
+        echo "WARNING: Gateway ${gateway_namespace}/${gateway_name} does not exist; skipping optional listener patch:"
+        echo "  ${listener_file}"
+        return 0
     fi
 
-    listener_name="$(jq -r '.[0].value.name // ""' "${listener_file}")"
+    listener_name="$(jq -r '.[0].value.name // ""' "${listener_file}" 2>/dev/null || true)"
     if [[ -z "${listener_name}" ]]; then
-        echo "ERROR: Listener patch does not contain .[0].value.name:" >&2
-        echo "  ${listener_file}" >&2
-        return 1
+        echo "WARNING: Listener patch does not contain .[0].value.name; skipping:"
+        echo "  ${listener_file}"
+        return 0
     fi
 
     desired_listener="$(
         jq -c '.[0].value | {name, port, protocol, hostname, tls, allowedRoutes}' \
-            "${listener_file}"
+            "${listener_file}" 2>/dev/null || true
     )"
+
+    if [[ -z "${desired_listener}" || "${desired_listener}" == "null" ]]; then
+        echo "WARNING: Could not parse listener patch; skipping:"
+        echo "  ${listener_file}"
+        return 0
+    fi
+
     gateway_json="$(
         kubectl -n "${gateway_namespace}" get gateway "${gateway_name}" -o json
     )"
@@ -690,18 +711,24 @@ ensure_gateway_listener() {
                 > "${patch_file}"
 
             echo "Replacing cluster-http with ${listener_name} on ${gateway_namespace}/${gateway_name}"
-            kubectl -n "${gateway_namespace}" patch gateway "${gateway_name}" \
+            if ! kubectl -n "${gateway_namespace}" patch gateway "${gateway_name}" \
                 --type='json' \
-                --patch-file "${patch_file}"
+                --patch-file "${patch_file}"; then
+                echo "WARNING: Failed to apply optional Gateway listener patch for ${listener_name}."
+            fi
             rm -f "${patch_file}"
             return 0
         fi
     fi
 
-    echo "Adding Gateway listener ${listener_name} to ${gateway_namespace}/${gateway_name}"
-    kubectl -n "${gateway_namespace}" patch gateway "${gateway_name}" \
+    echo "Adding optional Gateway listener ${listener_name} to ${gateway_namespace}/${gateway_name}"
+    if ! kubectl -n "${gateway_namespace}" patch gateway "${gateway_name}" \
         --type='json' \
-        --patch-file "${listener_file}"
+        --patch-file "${listener_file}"; then
+        echo "WARNING: Failed to apply optional Gateway listener patch for ${listener_name}."
+    fi
+
+    return 0
 }
 
 ensure_route_listeners() {
@@ -715,16 +742,28 @@ ensure_route_listeners() {
         [[ -n "${gateway_name}" && -n "${listener_name}" ]] || continue
         gateway_namespace="${gateway_namespace:-envoy-gateway}"
 
-        listener_file="$(listener_file_for_section "${listener_name}" || true)"
-
-        if [[ -z "${listener_file}" ]]; then
-            echo "ERROR: Route references Gateway listener '${listener_name}', but no matching listener patch was found:" >&2
-            echo "  route: ${route_file}" >&2
-            echo "  listener directory: ${GATEWAY_LISTENER_TARGET_DIR}" >&2
-            return 1
+        # Site-owned Gateway configuration wins. If the live Gateway already
+        # provides the listener referenced by the route, there is nothing for
+        # observability bootstrap to manage.
+        if gateway_listener_exists \
+            "${gateway_name}" \
+            "${gateway_namespace}" \
+            "${listener_name}"; then
+            echo "Gateway listener already present: ${gateway_namespace}/${gateway_name}:${listener_name}"
+            continue
         fi
 
-        echo "Ensuring Gateway listener ${gateway_namespace}/${gateway_name}:${listener_name}"
+        listener_file="$(listener_file_for_section "${listener_name}" || true)"
+
+        # Listener patches are optional. A route may intentionally reference a
+        # listener owned by site configuration, or the listener may be created
+        # later. Do not block route creation when no observability patch exists.
+        if [[ -z "${listener_file}" ]]; then
+            echo "WARNING: No observability listener patch found for ${gateway_namespace}/${gateway_name}:${listener_name}; applying the route without managing that listener."
+            continue
+        fi
+
+        echo "Ensuring optional Gateway listener ${gateway_namespace}/${gateway_name}:${listener_name}"
         echo "  patch: ${listener_file}"
 
         ensure_gateway_listener \
