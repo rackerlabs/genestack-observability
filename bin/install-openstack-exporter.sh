@@ -8,6 +8,8 @@ SERVICE_NAMESPACE="monitoring"
 GENESTACK_BASE_DIR="${GENESTACK_BASE_DIR:-/opt/genestack}"
 GENESTACK_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR:-/etc/genestack}"
 
+KUSTOMIZE_POST_RENDERER_ARGS="${KUSTOMIZE_POST_RENDERER_ARGS:-observability/${SERVICE_NAME_DEFAULT}/overlay}"
+
 CHART_DIR="${GENESTACK_BASE_DIR}/base-helm-configs/observability/${CHART_DIR_NAME}"
 SERVICE_CUSTOM_OVERRIDES="${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/${CHART_DIR_NAME}"
 GLOBAL_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR}/helm-configs/global_overrides"
@@ -90,7 +92,7 @@ helm_command=(
     --set "image.tag=${DYNAMIC_TAG}"
     --set "service.port=${DYNAMIC_PORT}"
     --post-renderer "${GENESTACK_OVERRIDES_DIR}/kustomize/kustomize.sh"
-    --post-renderer-args "${CHART_DIR_NAME}/overlay"
+    --post-renderer-args "observability/${CHART_DIR_NAME}/overlay"
     "$@"
 )
 

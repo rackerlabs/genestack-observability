@@ -9,6 +9,11 @@ GENESTACK_CONFIG_DIR="${GENESTACK_CONFIG_DIR:-/etc/genestack}"
 DEFAULT_COMPONENTS_FILE="${GENESTACK_OBSERVABILITY_DIR}/bin/observability-components.yaml"
 SITE_COMPONENTS_FILE="${GENESTACK_CONFIG_DIR}/observability-components.yaml"
 
+HELM_SITE_ROOT="${GENESTACK_CONFIG_DIR}/helm-configs/observability"
+KUSTOMIZE_SITE_ROOT="${GENESTACK_CONFIG_DIR}/kustomize/observability"
+KUSTOMIZE_RENDERER_SOURCE="${GENESTACK_DIR}/base-kustomize/kustomize.sh"
+KUSTOMIZE_RENDERER_TARGET="${GENESTACK_CONFIG_DIR}/kustomize/kustomize.sh"
+
 if [[ -n "${OBSERVABILITY_COMPONENTS_FILE:-}" ]]; then
     COMPONENTS_FILE="${OBSERVABILITY_COMPONENTS_FILE}"
 elif [[ -f "${SITE_COMPONENTS_FILE}" ]]; then
@@ -162,6 +167,84 @@ ensure_component_dependencies() {
     esac
 }
 
+ensure_kustomize_renderer() {
+    mkdir -p "${GENESTACK_CONFIG_DIR}/kustomize"
+
+    if [[ -e "${KUSTOMIZE_RENDERER_TARGET}" || -L "${KUSTOMIZE_RENDERER_TARGET}" ]]; then
+        return 0
+    fi
+
+    if [[ ! -f "${KUSTOMIZE_RENDERER_SOURCE}" ]]; then
+        echo "ERROR: Genestack Kustomize post-renderer is missing:"
+        echo "  ${KUSTOMIZE_RENDERER_SOURCE}"
+        exit 1
+    fi
+
+    ln -s "${KUSTOMIZE_RENDERER_SOURCE}" "${KUSTOMIZE_RENDERER_TARGET}"
+    echo "Created Kustomize post-renderer:"
+    echo "  ${KUSTOMIZE_RENDERER_TARGET} -> ${KUSTOMIZE_RENDERER_SOURCE}"
+}
+
+ensure_component_site_config() {
+    local component="$1"
+    local helm_source="${GENESTACK_OBSERVABILITY_DIR}/helm-configs/${component}"
+    local helm_target="${HELM_SITE_ROOT}/${component}"
+    local kustomize_source="${GENESTACK_OBSERVABILITY_DIR}/kustomize/${component}"
+    local kustomize_target="${KUSTOMIZE_SITE_ROOT}/${component}"
+    local kustomize_base_source="${kustomize_source}/base"
+    local kustomize_base_target="${kustomize_target}/base"
+    local kustomize_overlay_target="${kustomize_target}/overlay"
+
+    mkdir -p "${HELM_SITE_ROOT}" "${KUSTOMIZE_SITE_ROOT}"
+
+    # Fresh lab behavior only: seed a complete Helm service directory when
+    # absent. Existing /etc/genestack service trees are never merged.
+    if [[ -d "${helm_source}" ]]; then
+        if [[ -e "${helm_target}" || -L "${helm_target}" ]]; then
+            echo "Keeping existing Helm service configuration: ${helm_target}"
+        else
+            cp -a -- "${helm_source}" "${helm_target}"
+            echo "Created Helm service configuration: ${helm_target}"
+        fi
+    fi
+
+    if [[ -d "${kustomize_source}" ]]; then
+        if [[ ! -e "${kustomize_target}" && ! -L "${kustomize_target}" ]]; then
+            mkdir "${kustomize_target}"
+            echo "Created Kustomize service directory: ${kustomize_target}"
+        elif [[ ! -d "${kustomize_target}" ]]; then
+            echo "WARNING: Existing Kustomize service path is not a directory; leaving it untouched:"
+            echo "  ${kustomize_target}"
+            ensure_kustomize_renderer
+            return 0
+        fi
+
+        if [[ -d "${kustomize_base_source}" ]]; then
+            if [[ -e "${kustomize_base_target}" || -L "${kustomize_base_target}" ]]; then
+                echo "Keeping existing Kustomize base: ${kustomize_base_target}"
+            else
+                cp -a -- "${kustomize_base_source}" "${kustomize_base_target}"
+                echo "Created Kustomize base: ${kustomize_base_target}"
+            fi
+        fi
+
+        if [[ -e "${kustomize_overlay_target}" || -L "${kustomize_overlay_target}" ]]; then
+            echo "Keeping existing Kustomize overlay: ${kustomize_overlay_target}"
+        else
+            mkdir "${kustomize_overlay_target}"
+            cat > "${kustomize_overlay_target}/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+EOF
+            echo "Created Kustomize overlay: ${kustomize_overlay_target}"
+        fi
+    fi
+
+    ensure_kustomize_renderer
+}
+
 list_components() {
     local component
     local state
@@ -183,6 +266,7 @@ list_components() {
 install_component() {
     local component="$1"
     local script
+    local kustomize_post_renderer_args
 
     if ! component_exists "${component}"; then
         echo "ERROR: Unknown observability component: ${component}"
@@ -200,6 +284,9 @@ install_component() {
     fi
 
     ensure_component_dependencies "${component}"
+    ensure_component_site_config "${component}"
+
+    kustomize_post_renderer_args="observability/${component}/overlay"
 
     echo
     echo "============================================================"
@@ -208,7 +295,11 @@ install_component() {
     echo "============================================================"
     echo
 
-    "${script}"
+    # monitoring-common.sh should consume KUSTOMIZE_POST_RENDERER_ARGS when it
+    # builds the Helm command. Export it per component so the shared
+    # post-renderer resolves /etc/genestack/kustomize/observability/<service>.
+    KUSTOMIZE_POST_RENDERER_ARGS="${kustomize_post_renderer_args}" \
+        "${script}"
 }
 
 if [[ $# -gt 0 ]]; then

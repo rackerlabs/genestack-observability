@@ -10,9 +10,14 @@ GENESTACK_OBSERVABILITY_REPO="${GENESTACK_OBSERVABILITY_REPO:-git@github.com:rac
 
 HELM_SOURCE="${GENESTACK_OBSERVABILITY_DIR}/helm-configs"
 HELM_TARGET="${GENESTACK_DIR}/base-helm-configs/observability"
+HELM_SITE_DIR="${GENESTACK_CONFIG_DIR}/helm-configs/observability"
 
 KUSTOMIZE_SOURCE="${GENESTACK_OBSERVABILITY_DIR}/kustomize"
 KUSTOMIZE_TARGET="${GENESTACK_DIR}/base-kustomize/observability"
+KUSTOMIZE_SITE_ROOT="${GENESTACK_CONFIG_DIR}/kustomize"
+KUSTOMIZE_SITE_DIR="${KUSTOMIZE_SITE_ROOT}/observability"
+KUSTOMIZE_RENDERER_SOURCE="${GENESTACK_DIR}/base-kustomize/kustomize.sh"
+KUSTOMIZE_RENDERER_TARGET="${KUSTOMIZE_SITE_ROOT}/kustomize.sh"
 
 DEFAULT_COMPONENTS_FILE="${GENESTACK_OBSERVABILITY_DIR}/bin/observability-components.yaml"
 SITE_COMPONENTS_FILE="${GENESTACK_CONFIG_DIR}/observability-components.yaml"
@@ -55,6 +60,14 @@ Observability route templates are sourced from:
 
 Rendered/site-specific routes live under:
   /etc/genestack/gateway-api/routes
+
+Lab-only service configuration seeding:
+  Helm source:       /opt/genestack-observability/helm-configs
+  Helm site target:  /etc/genestack/helm-configs/observability
+  Kustomize source:  /opt/genestack-observability/kustomize
+  Kustomize target:  /etc/genestack/kustomize/observability
+
+Existing site service directories are never overwritten or merged.
 EOF
 }
 
@@ -108,7 +121,6 @@ if [[ ! -d "${GENESTACK_OBSERVABILITY_DIR}/.git" ]]; then
     echo "Cloning genestack-observability..."
     git clone \
         --recurse-submodules \
-        -j4 \
         "${GENESTACK_OBSERVABILITY_REPO}" \
         "${GENESTACK_OBSERVABILITY_DIR}"
 elif [[ "${UPDATE_REPO}" == "true" ]]; then
@@ -119,8 +131,7 @@ elif [[ "${UPDATE_REPO}" == "true" ]]; then
     git -C "${GENESTACK_OBSERVABILITY_DIR}" submodule sync --recursive
     git -C "${GENESTACK_OBSERVABILITY_DIR}" submodule update \
         --init \
-        --recursive \
-        -j4
+        --recursive
 fi
 
 for source in "${HELM_SOURCE}" "${KUSTOMIZE_SOURCE}"; do
@@ -155,6 +166,157 @@ ensure_symlink "${HELM_SOURCE}" "${HELM_TARGET}"
 ensure_symlink "${KUSTOMIZE_SOURCE}" "${KUSTOMIZE_TARGET}"
 
 mkdir -p "${GENESTACK_CONFIG_DIR}"
+
+seed_helm_service_configs() {
+    local source_dir
+    local service_name
+    local target_dir
+    local found=0
+    local created=0
+    local kept=0
+
+    mkdir -p "${HELM_SITE_DIR}"
+
+    shopt -s nullglob
+    for source_dir in "${HELM_SOURCE}"/*; do
+        [[ -d "${source_dir}" ]] || continue
+
+        found=1
+        service_name="$(basename "${source_dir}")"
+        target_dir="${HELM_SITE_DIR}/${service_name}"
+
+        # /etc/genestack is site/operator-owned. If the service directory
+        # already exists in any form, leave the complete tree untouched.
+        if [[ -e "${target_dir}" || -L "${target_dir}" ]]; then
+            echo "Keeping existing Helm service configuration: ${target_dir}"
+            kept=$((kept + 1))
+            continue
+        fi
+
+        cp -a -- "${source_dir}" "${target_dir}"
+        echo "Created Helm service configuration: ${target_dir}"
+        created=$((created + 1))
+    done
+    shopt -u nullglob
+
+    if [[ "${found}" -eq 0 ]]; then
+        echo "No observability Helm service directories found under:"
+        echo "  ${HELM_SOURCE}"
+    else
+        echo "Helm service configuration: created=${created} existing=${kept}"
+    fi
+}
+
+ensure_kustomize_renderer() {
+    mkdir -p "${KUSTOMIZE_SITE_ROOT}" "${KUSTOMIZE_SITE_DIR}"
+
+    # The Genestack post-renderer itself remains core-owned. If a site copy or
+    # link already exists, do not touch it.
+    if [[ -e "${KUSTOMIZE_RENDERER_TARGET}" || -L "${KUSTOMIZE_RENDERER_TARGET}" ]]; then
+        echo "Keeping existing Kustomize post-renderer: ${KUSTOMIZE_RENDERER_TARGET}"
+        return 0
+    fi
+
+    if [[ ! -f "${KUSTOMIZE_RENDERER_SOURCE}" ]]; then
+        echo "ERROR: Genestack Kustomize post-renderer is missing:"
+        echo "  ${KUSTOMIZE_RENDERER_SOURCE}"
+        return 1
+    fi
+
+    ln -s "${KUSTOMIZE_RENDERER_SOURCE}" "${KUSTOMIZE_RENDERER_TARGET}"
+    echo "Created Kustomize post-renderer link:"
+    echo "  ${KUSTOMIZE_RENDERER_TARGET} -> ${KUSTOMIZE_RENDERER_SOURCE}"
+}
+
+seed_kustomize_service_configs() {
+    local source_dir
+    local service_name
+    local target_dir
+    local source_base
+    local target_base
+    local target_overlay
+    local found=0
+    local created_services=0
+    local created_bases=0
+    local created_overlays=0
+
+    ensure_kustomize_renderer
+    mkdir -p "${KUSTOMIZE_SITE_DIR}"
+
+    shopt -s nullglob
+    for source_dir in "${KUSTOMIZE_SOURCE}"/*; do
+        [[ -d "${source_dir}" ]] || continue
+
+        found=1
+        service_name="$(basename "${source_dir}")"
+        target_dir="${KUSTOMIZE_SITE_DIR}/${service_name}"
+        source_base="${source_dir}/base"
+        target_base="${target_dir}/base"
+        target_overlay="${target_dir}/overlay"
+
+        if [[ ! -e "${target_dir}" && ! -L "${target_dir}" ]]; then
+            mkdir "${target_dir}"
+            echo "Created Kustomize service directory: ${target_dir}"
+            created_services=$((created_services + 1))
+        elif [[ ! -d "${target_dir}" ]]; then
+            echo "WARNING: Existing Kustomize service path is not a directory; leaving it untouched:"
+            echo "  ${target_dir}"
+            continue
+        fi
+
+        # The observability repository owns the base. Seed it only when the
+        # site path does not already exist. Never merge into or replace an
+        # existing /etc/genestack base.
+        if [[ -d "${source_base}" ]]; then
+            if [[ -e "${target_base}" || -L "${target_base}" ]]; then
+                echo "Keeping existing Kustomize base: ${target_base}"
+            else
+                cp -a -- "${source_base}" "${target_base}"
+                echo "Created Kustomize base: ${target_base}"
+                created_bases=$((created_bases + 1))
+            fi
+        else
+            echo "Info: Observability Kustomize source has no base directory for ${service_name}:"
+            echo "  ${source_base}"
+        fi
+
+        # The overlay is site-owned and intentionally does not exist in the
+        # observability repository. For a fresh lab build, create the minimal
+        # overlay expected by the shared Genestack post-renderer.
+        if [[ -e "${target_overlay}" || -L "${target_overlay}" ]]; then
+            echo "Keeping existing Kustomize overlay: ${target_overlay}"
+        else
+            mkdir "${target_overlay}"
+            cat > "${target_overlay}/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+EOF
+            echo "Created Kustomize overlay: ${target_overlay}"
+            created_overlays=$((created_overlays + 1))
+        fi
+    done
+    shopt -u nullglob
+
+    if [[ "${found}" -eq 0 ]]; then
+        echo "No observability Kustomize service directories found under:"
+        echo "  ${KUSTOMIZE_SOURCE}"
+    else
+        echo "Kustomize service configuration:"
+        echo "  created service dirs=${created_services}"
+        echo "  created base dirs=${created_bases}"
+        echo "  created overlays=${created_overlays}"
+    fi
+}
+
+echo
+echo "Seeding missing observability Helm service configuration..."
+seed_helm_service_configs
+
+echo
+echo "Seeding missing observability Kustomize service configuration..."
+seed_kustomize_service_configs
 
 if [[ ! -f "${SITE_COMPONENTS_FILE}" ]]; then
     if [[ ! -f "${DEFAULT_COMPONENTS_FILE}" ]]; then

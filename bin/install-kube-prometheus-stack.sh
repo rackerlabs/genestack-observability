@@ -19,6 +19,8 @@ HELM_REPO_URL_DEFAULT="https://prometheus-community.github.io/helm-charts"
 GENESTACK_BASE_DIR="${GENESTACK_BASE_DIR:-/opt/genestack}"
 GENESTACK_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR:-/etc/genestack}"
 
+KUSTOMIZE_POST_RENDERER_ARGS="${KUSTOMIZE_POST_RENDERER_ARGS:-observability/${SERVICE_NAME_DEFAULT}/overlay}"
+
 # Define service-specific override directories based on the framework
 SERVICE_BASE_OVERRIDES="${GENESTACK_BASE_DIR}/base-helm-configs/observability/${SERVICE_NAME_DEFAULT}"
 SERVICE_CUSTOM_OVERRIDES="${GENESTACK_OVERRIDES_DIR}/helm-configs/observability/${SERVICE_NAME_DEFAULT}"
@@ -160,7 +162,7 @@ helm_command=(
 
     # Post-renderer configuration
     --post-renderer "$GENESTACK_OVERRIDES_DIR/kustomize/kustomize.sh"
-    --post-renderer-args "$SERVICE_NAME_DEFAULT/overlay"
+    --post-renderer-args "$KUSTOMIZE_POST_RENDERER_ARGS"
 
     "$@"
 )
