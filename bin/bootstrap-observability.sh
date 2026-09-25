@@ -50,6 +50,10 @@ Environment:
   GENESTACK_CONFIG_DIR           Default: /etc/genestack
   GENESTACK_OBSERVABILITY_REPO   Default:
                                  git@github.com:rackerlabs/genestack-observability.git
+  GENESTACK_OBSERVABILITY_OWNER  Repository owner. Defaults to SUDO_USER when
+                                 available, otherwise the invoking user.
+  GENESTACK_OBSERVABILITY_GROUP  Repository group. Defaults to the owner's
+                                 primary group.
   OBSERVABILITY_GATEWAY_DOMAIN   Optional domain used when rendering missing
                                  route templates containing your.domain.tld.
                                  Falls back to GATEWAY_DOMAIN, envoy-gateways.yaml,
@@ -112,26 +116,142 @@ do
     fi
 done
 
-if [[ ! -d "${GENESTACK_OBSERVABILITY_DIR}/.git" ]]; then
-    if [[ -e "${GENESTACK_OBSERVABILITY_DIR}" ]]; then
-        echo "ERROR: ${GENESTACK_OBSERVABILITY_DIR} exists but is not a Git checkout."
+GENESTACK_OBSERVABILITY_OWNER="${GENESTACK_OBSERVABILITY_OWNER:-${SUDO_USER:-$(id -un)}}"
+
+if ! id "${GENESTACK_OBSERVABILITY_OWNER}" >/dev/null 2>&1; then
+    echo "ERROR: Repository owner does not exist: ${GENESTACK_OBSERVABILITY_OWNER}"
+    exit 1
+fi
+
+GENESTACK_OBSERVABILITY_GROUP="${GENESTACK_OBSERVABILITY_GROUP:-$(id -gn "${GENESTACK_OBSERVABILITY_OWNER}")}"
+
+run_privileged() {
+    if [[ "${EUID}" -eq 0 ]]; then
+        "$@"
+        return
+    fi
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "ERROR: sudo is required to prepare ${GENESTACK_OBSERVABILITY_DIR}."
         exit 1
     fi
 
-    echo "Cloning genestack-observability..."
-    git clone \
+    sudo "$@"
+}
+
+run_as_repo_owner() {
+    local owner_uid
+
+    owner_uid="$(id -u "${GENESTACK_OBSERVABILITY_OWNER}")"
+
+    if [[ "${EUID}" -eq "${owner_uid}" ]]; then
+        "$@"
+        return
+    fi
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "ERROR: sudo is required to run repository operations as ${GENESTACK_OBSERVABILITY_OWNER}."
+        exit 1
+    fi
+
+    sudo -H -u "${GENESTACK_OBSERVABILITY_OWNER}" -- "$@"
+}
+
+ensure_repo_directory() {
+    if [[ -L "${GENESTACK_OBSERVABILITY_DIR}" ]]; then
+        echo "ERROR: Refusing to use a symlink as the observability repository root:"
+        echo "  ${GENESTACK_OBSERVABILITY_DIR}"
+        exit 1
+    fi
+
+    if [[ -e "${GENESTACK_OBSERVABILITY_DIR}" && ! -d "${GENESTACK_OBSERVABILITY_DIR}" ]]; then
+        echo "ERROR: Observability repository path exists but is not a directory:"
+        echo "  ${GENESTACK_OBSERVABILITY_DIR}"
+        exit 1
+    fi
+
+    if [[ ! -d "${GENESTACK_OBSERVABILITY_DIR}" ]]; then
+        echo "Creating observability repository directory:"
+        echo "  ${GENESTACK_OBSERVABILITY_DIR}"
+
+        run_privileged mkdir -p "${GENESTACK_OBSERVABILITY_DIR}"
+    fi
+
+    # /opt is normally root-owned. Bootstrap only uses privilege here to
+    # prepare the repository path; Git operations themselves run as the
+    # non-root repository owner.
+    run_privileged chown \
+        "${GENESTACK_OBSERVABILITY_OWNER}:${GENESTACK_OBSERVABILITY_GROUP}" \
+        "${GENESTACK_OBSERVABILITY_DIR}"
+}
+
+ensure_repo_ownership() {
+    local mismatched_path
+
+    mismatched_path="$(
+        find "${GENESTACK_OBSERVABILITY_DIR}" \
+            -xdev \
+            \( \
+                ! -user "${GENESTACK_OBSERVABILITY_OWNER}" \
+                -o \
+                ! -group "${GENESTACK_OBSERVABILITY_GROUP}" \
+            \) \
+            -print \
+            -quit \
+            2>/dev/null || true
+    )"
+
+    if [[ -z "${mismatched_path}" ]]; then
+        return
+    fi
+
+    echo "Correcting observability repository ownership:"
+    echo "  ${GENESTACK_OBSERVABILITY_DIR}"
+    echo "  owner: ${GENESTACK_OBSERVABILITY_OWNER}:${GENESTACK_OBSERVABILITY_GROUP}"
+
+    run_privileged chown -R \
+        "${GENESTACK_OBSERVABILITY_OWNER}:${GENESTACK_OBSERVABILITY_GROUP}" \
+        "${GENESTACK_OBSERVABILITY_DIR}"
+}
+
+ensure_repo_directory
+
+if [[ ! -d "${GENESTACK_OBSERVABILITY_DIR}/.git" ]]; then
+    if find "${GENESTACK_OBSERVABILITY_DIR}" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -print \
+        -quit | grep -q .; then
+        echo "ERROR: ${GENESTACK_OBSERVABILITY_DIR} exists but is not an empty Git checkout target."
+        echo "Refusing to delete or overwrite existing content."
+        exit 1
+    fi
+
+    echo "Cloning genestack-observability as ${GENESTACK_OBSERVABILITY_OWNER}..."
+    run_as_repo_owner git clone \
         --recurse-submodules \
         "${GENESTACK_OBSERVABILITY_REPO}" \
         "${GENESTACK_OBSERVABILITY_DIR}"
-elif [[ "${UPDATE_REPO}" == "true" ]]; then
-    echo "Updating genestack-observability..."
-    git -C "${GENESTACK_OBSERVABILITY_DIR}" pull --ff-only
+else
+    ensure_repo_ownership
 
-    echo "Synchronizing and updating submodules..."
-    git -C "${GENESTACK_OBSERVABILITY_DIR}" submodule sync --recursive
-    git -C "${GENESTACK_OBSERVABILITY_DIR}" submodule update \
-        --init \
-        --recursive
+    if [[ "${UPDATE_REPO}" == "true" ]]; then
+        echo "Updating genestack-observability as ${GENESTACK_OBSERVABILITY_OWNER}..."
+        run_as_repo_owner git \
+            -C "${GENESTACK_OBSERVABILITY_DIR}" \
+            pull --ff-only
+
+        echo "Synchronizing and updating submodules..."
+        run_as_repo_owner git \
+            -C "${GENESTACK_OBSERVABILITY_DIR}" \
+            submodule sync --recursive
+
+        run_as_repo_owner git \
+            -C "${GENESTACK_OBSERVABILITY_DIR}" \
+            submodule update \
+            --init \
+            --recursive
+    fi
 fi
 
 for source in "${HELM_SOURCE}" "${KUSTOMIZE_SOURCE}"; do

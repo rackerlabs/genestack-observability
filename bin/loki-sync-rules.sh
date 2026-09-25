@@ -16,23 +16,12 @@ LOKI_NAMESPACES_REGEX="${LOKI_NAMESPACES_REGEX:-^genestack-}"
 #
 # When set, HTTPRoute discovery and automatic port-forward fallback are
 # skipped entirely.
-#
-# Example:
-#
-#   LOKI_ADDRESS=http://127.0.0.1:13101 \
-#     bin/install-observability.sh loki-rules
-#
 LOKI_ADDRESS="${LOKI_ADDRESS:-}"
 
-# Ruler endpoint used to determine whether the selected Loki endpoint is
-# usable before invoking lokitool.
+# Loki Ruler endpoint used for readiness checks.
 LOKI_RULER_API_PATH="${LOKI_RULER_API_PATH:-/loki/api/v1/rules}"
 
 # Lab fallback.
-#
-# If no explicit LOKI_ADDRESS is supplied and the HTTPRoute/Gateway endpoint
-# cannot be discovered or cannot be reached from the overseer, temporarily
-# port-forward the Loki gateway service.
 LOKI_PORT_FORWARD_NAMESPACE="${LOKI_PORT_FORWARD_NAMESPACE:-${LOKI_ROUTE_NAMESPACE}}"
 LOKI_PORT_FORWARD_SERVICE="${LOKI_PORT_FORWARD_SERVICE:-loki-gateway}"
 LOKI_PORT_FORWARD_REMOTE_PORT="${LOKI_PORT_FORWARD_REMOTE_PORT:-80}"
@@ -41,9 +30,14 @@ LOKI_PORT_FORWARD_REMOTE_PORT="${LOKI_PORT_FORWARD_REMOTE_PORT:-80}"
 LOKI_PORT_FORWARD_LOCAL_PORT="${LOKI_PORT_FORWARD_LOCAL_PORT:-13101}"
 LOKI_PORT_FORWARD_PORT_TRIES="${LOKI_PORT_FORWARD_PORT_TRIES:-20}"
 
-# Endpoint probe timeouts.
+# Individual HTTP request timeouts.
 LOKI_CONNECT_TIMEOUT="${LOKI_CONNECT_TIMEOUT:-5}"
 LOKI_REQUEST_TIMEOUT="${LOKI_REQUEST_TIMEOUT:-15}"
+
+# Loki can take time to become usable after Helm reports the resources
+# created. During this window the gateway may legitimately return 502/503/504.
+LOKI_READY_TIMEOUT="${LOKI_READY_TIMEOUT:-180}"
+LOKI_READY_INTERVAL="${LOKI_READY_INTERVAL:-5}"
 
 PORT_FORWARD_PID=""
 PORT_FORWARD_LOG=""
@@ -52,6 +46,8 @@ LOKI_ENDPOINT_SOURCE=""
 PROBE_HTTP_CODE=""
 PROBE_BODY=""
 PROBE_ERROR=""
+PROBE_CURL_RC="0"
+
 
 cleanup() {
     if [[ -n "${PORT_FORWARD_PID}" ]]; then
@@ -67,6 +63,7 @@ cleanup() {
         rm -f "${PORT_FORWARD_LOG}"
     fi
 }
+
 
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -93,7 +90,6 @@ probe_ruler_api() {
     local address="$1"
     local body_file
     local error_file
-    local rc=0
 
     body_file="$(mktemp)"
     error_file="$(mktemp)"
@@ -101,6 +97,7 @@ probe_ruler_api() {
     PROBE_HTTP_CODE=""
     PROBE_BODY=""
     PROBE_ERROR=""
+    PROBE_CURL_RC="0"
 
     PROBE_HTTP_CODE="$(
         curl \
@@ -113,14 +110,14 @@ probe_ruler_api() {
             -H "X-Scope-OrgID: ${LOKI_TENANT_ID}" \
             "${address}${LOKI_RULER_API_PATH}" \
             2>"${error_file}"
-    )" || rc=$?
+    )" || PROBE_CURL_RC="$?"
 
     PROBE_BODY="$(cat "${body_file}")"
     PROBE_ERROR="$(cat "${error_file}")"
 
     rm -f "${body_file}" "${error_file}"
 
-    if (( rc != 0 )); then
+    if [[ "${PROBE_CURL_RC}" != "0" ]]; then
         return 1
     fi
 
@@ -128,15 +125,15 @@ probe_ruler_api() {
 }
 
 
-validate_ruler_response() {
+ruler_api_is_ready() {
     case "${PROBE_HTTP_CODE}" in
         2??)
             return 0
             ;;
 
         404)
-            # An empty Loki Ruler can legitimately return 404 before the
-            # first rule group has been synchronized.
+            # Loki legitimately returns 404 when the Ruler is available but
+            # contains no rule groups yet.
             if grep \
                 --quiet \
                 --ignore-case \
@@ -149,6 +146,40 @@ validate_ruler_response() {
             ;;
     esac
 
+    return 1
+}
+
+
+ruler_api_is_retryable() {
+    # Transport failures are commonly seen while the gateway Service,
+    # EndpointSlice, pod, or local port-forward becomes usable.
+    if [[ "${PROBE_CURL_RC}" != "0" ]]; then
+        return 0
+    fi
+
+    case "${PROBE_HTTP_CODE}" in
+        502|503|504)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+
+print_probe_failure() {
+    if [[ "${PROBE_CURL_RC}" != "0" ]]; then
+        error "Unable to connect to Loki Ruler API."
+
+        if [[ -n "${PROBE_ERROR}" ]]; then
+            echo >&2
+            echo "curl error:" >&2
+            echo "  ${PROBE_ERROR}" >&2
+        fi
+
+        return
+    fi
+
     error "Loki Ruler API returned HTTP ${PROBE_HTTP_CODE}."
 
     if [[ -n "${PROBE_BODY}" ]]; then
@@ -156,8 +187,78 @@ validate_ruler_response() {
         echo "Response:" >&2
         printf '%s\n' "${PROBE_BODY}" >&2
     fi
+}
 
-    return 1
+
+wait_for_ruler_api() {
+    local address="$1"
+    local deadline
+    local remaining
+    local attempt=1
+
+    deadline="$((SECONDS + LOKI_READY_TIMEOUT))"
+
+    while true; do
+        probe_ruler_api "${address}" || true
+
+        if ruler_api_is_ready; then
+            if [[ "${PROBE_HTTP_CODE}" == "404" ]]; then
+                echo "Loki Ruler API is reachable; no rule groups are currently stored."
+            else
+                echo "Loki Ruler API is reachable."
+            fi
+
+            return 0
+        fi
+
+        if ! ruler_api_is_retryable; then
+            print_probe_failure
+            return 1
+        fi
+
+        remaining="$((deadline - SECONDS))"
+
+        if (( remaining <= 0 )); then
+            error \
+                "Timed out after ${LOKI_READY_TIMEOUT}s waiting for " \
+                "Loki Ruler API:"
+            echo "  ${address}${LOKI_RULER_API_PATH}" >&2
+
+            echo >&2
+            echo "Last readiness result:" >&2
+
+            if [[ "${PROBE_CURL_RC}" != "0" ]]; then
+                echo "  curl exit code: ${PROBE_CURL_RC}" >&2
+
+                if [[ -n "${PROBE_ERROR}" ]]; then
+                    echo "  ${PROBE_ERROR}" >&2
+                fi
+            else
+                echo "  HTTP ${PROBE_HTTP_CODE}" >&2
+
+                if [[ -n "${PROBE_BODY}" ]]; then
+                    printf '  %s\n' "${PROBE_BODY}" >&2
+                fi
+            fi
+
+            return 1
+        fi
+
+        if [[ "${PROBE_CURL_RC}" != "0" ]]; then
+            echo \
+                "Loki Ruler API is not reachable yet " \
+                "(curl exit ${PROBE_CURL_RC}); " \
+                "retrying in ${LOKI_READY_INTERVAL}s..."
+        else
+            echo \
+                "Loki Ruler API is not ready yet " \
+                "(HTTP ${PROBE_HTTP_CODE}); " \
+                "retrying in ${LOKI_READY_INTERVAL}s..."
+        fi
+
+        sleep "${LOKI_READY_INTERVAL}"
+        attempt="$((attempt + 1))"
+    done
 }
 
 
@@ -339,8 +440,7 @@ start_loki_port_forward() {
 
         pid=$!
 
-        # Wait for kubectl to establish the listener. This also catches the
-        # common case where the requested local port is already occupied.
+        # Wait until kubectl has successfully opened the local listener.
         for ((check = 0; check < 40; check++)); do
             if grep \
                 --quiet \
@@ -384,7 +484,10 @@ start_loki_port_forward() {
             "address already in use" \
             "${log_file}"
         then
-            echo "  Local port ${local_port} is already in use; trying the next port."
+            echo \
+                "  Local port ${local_port} is already in use; " \
+                "trying the next port."
+
             rm -f "${log_file}"
             continue
         fi
@@ -433,6 +536,8 @@ validate_numeric_setting LOKI_PORT_FORWARD_REMOTE_PORT
 validate_numeric_setting LOKI_PORT_FORWARD_PORT_TRIES
 validate_numeric_setting LOKI_CONNECT_TIMEOUT
 validate_numeric_setting LOKI_REQUEST_TIMEOUT
+validate_numeric_setting LOKI_READY_TIMEOUT
+validate_numeric_setting LOKI_READY_INTERVAL
 
 LOKITOOL_INSTALLER="${GENESTACK_OBSERVABILITY_DIR}/bin/install-lokitool.sh"
 
@@ -458,8 +563,8 @@ echo "Using lokitool:"
 echo "  $(command -v lokitool)"
 lokitool version
 
-# The Genestack synchronization model depends on namespace-regex ownership.
-# Fail clearly if an older lokitool is still installed.
+# Genestack namespace ownership requires a lokitool version supporting
+# --namespaces-regex.
 LOKITOOL_DIFF_HELP="$(lokitool rules diff --help 2>&1 || true)"
 
 if ! grep \
@@ -468,8 +573,7 @@ if ! grep \
     -- "--namespaces-regex" \
     <<<"${LOKITOOL_DIFF_HELP}"
 then
-    error \
-        "The installed lokitool does not support --namespaces-regex."
+    error "The installed lokitool does not support --namespaces-regex."
     echo "Install the version pinned by:" >&2
     echo "  ${GENESTACK_OBSERVABILITY_DIR}/versions/lokitool" >&2
     echo "using:" >&2
@@ -504,12 +608,11 @@ else
         echo
         echo "Checking whether the discovered endpoint is reachable..."
 
-        # At this stage we care about transport reachability only.
+        # Any HTTP response means the HTTPRoute/Gateway itself can be reached.
         #
-        # Any actual HTTP response proves the route is reachable. A bad HTTP
-        # status is validated later and deliberately does NOT trigger a
-        # port-forward fallback, because that would hide a real production
-        # Loki/Gateway failure.
+        # A 502/503/504 is intentionally considered reachable here and is
+        # handled by the readiness loop below. We do not fall back to a
+        # port-forward just because Loki is still starting.
         if probe_ruler_api "${DISCOVERED_LOKI_ADDRESS}"; then
             LOKI_ADDRESS="${DISCOVERED_LOKI_ADDRESS}"
             LOKI_ENDPOINT_SOURCE="HTTPRoute/Gateway"
@@ -549,29 +652,13 @@ echo "  Rule dir:     ${LOKI_RULE_DIR}"
 echo "  Namespace RE: ${LOKI_NAMESPACES_REGEX}"
 echo
 
-echo "Checking Loki Ruler API..."
+echo "Waiting for Loki Ruler API:"
+echo "  Timeout:      ${LOKI_READY_TIMEOUT}s"
+echo "  Retry:        ${LOKI_READY_INTERVAL}s"
+echo
 
-if ! probe_ruler_api "${LOKI_ADDRESS}"; then
-    error "Unable to reach Loki Ruler API at:"
-    echo "  ${LOKI_ADDRESS}${LOKI_RULER_API_PATH}" >&2
-
-    if [[ -n "${PROBE_ERROR}" ]]; then
-        echo >&2
-        echo "curl error:" >&2
-        echo "  ${PROBE_ERROR}" >&2
-    fi
-
+if ! wait_for_ruler_api "${LOKI_ADDRESS}"; then
     exit 1
-fi
-
-if ! validate_ruler_response; then
-    exit 1
-fi
-
-if [[ "${PROBE_HTTP_CODE}" == "404" ]]; then
-    echo "Loki Ruler API is reachable; no rule groups are currently stored."
-else
-    echo "Loki Ruler API is reachable."
 fi
 
 echo
