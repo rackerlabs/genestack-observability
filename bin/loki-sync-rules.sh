@@ -48,6 +48,15 @@ if ! command -v lokitool >/dev/null 2>&1; then
     "${LOKITOOL_INSTALLER}"
 fi
 
+if ! command -v lokitool >/dev/null 2>&1; then
+    echo "ERROR: lokitool installation completed but lokitool is still not available in PATH." >&2
+    exit 1
+fi
+
+echo "Using lokitool:"
+echo "  $(command -v lokitool)"
+lokitool --version
+
 if [[ -z "${LOKI_ADDRESS}" ]]; then
     echo "Discovering Loki endpoint from HTTPRoute ${LOKI_ROUTE_NAMESPACE}/${LOKI_ROUTE_NAME}..."
 

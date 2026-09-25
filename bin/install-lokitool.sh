@@ -6,6 +6,7 @@ GENESTACK_OBSERVABILITY_DIR="${GENESTACK_OBSERVABILITY_DIR:-/opt/genestack-obser
 
 VERSION_FILE="${GENESTACK_OBSERVABILITY_DIR}/versions/lokitool"
 INSTALL_DIR="${LOKITOOL_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_PATH="${INSTALL_DIR}/lokitool"
 
 for command in curl unzip install; do
     if ! command -v "${command}" >/dev/null 2>&1; then
@@ -41,9 +42,12 @@ esac
 
 if command -v lokitool >/dev/null 2>&1; then
     if lokitool --version 2>&1 | grep -Fq "${VERSION}"; then
-        echo "lokitool ${VERSION} is already installed."
+        echo "lokitool ${VERSION} is already installed:"
+        echo "  $(command -v lokitool)"
         exit 0
     fi
+
+    echo "Installed lokitool does not match pinned version ${VERSION}; updating."
 fi
 
 ASSET="lokitool-linux-${ARCH}.zip"
@@ -63,7 +67,10 @@ curl \
     --output "${TMPDIR}/${ASSET}"
 
 mkdir -p "${TMPDIR}/extract"
-unzip -q "${TMPDIR}/${ASSET}" -d "${TMPDIR}/extract"
+
+unzip -q \
+    "${TMPDIR}/${ASSET}" \
+    -d "${TMPDIR}/extract"
 
 BINARY="$(
     find "${TMPDIR}/extract" \
@@ -79,10 +86,39 @@ if [[ -z "${BINARY}" ]]; then
     exit 1
 fi
 
-install \
-    -m 0755 \
-    "${BINARY}" \
-    "${INSTALL_DIR}/lokitool"
+if [[ "${EUID}" -eq 0 ]]; then
+    mkdir -p "${INSTALL_DIR}"
 
-echo "Installed ${INSTALL_DIR}/lokitool"
-"${INSTALL_DIR}/lokitool" --version
+    install \
+        -m 0755 \
+        "${BINARY}" \
+        "${INSTALL_PATH}"
+elif [[ -d "${INSTALL_DIR}" && -w "${INSTALL_DIR}" ]]; then
+    install \
+        -m 0755 \
+        "${BINARY}" \
+        "${INSTALL_PATH}"
+elif command -v sudo >/dev/null 2>&1; then
+    echo "Installing lokitool to ${INSTALL_PATH} with sudo..."
+
+    sudo mkdir -p "${INSTALL_DIR}"
+
+    sudo install \
+        -m 0755 \
+        "${BINARY}" \
+        "${INSTALL_PATH}"
+else
+    echo "ERROR: Cannot install lokitool to ${INSTALL_PATH}." >&2
+    echo "The destination requires elevated privileges and sudo is unavailable." >&2
+    exit 1
+fi
+
+if [[ ! -x "${INSTALL_PATH}" ]]; then
+    echo "ERROR: lokitool installation did not create an executable binary:" >&2
+    echo "  ${INSTALL_PATH}" >&2
+    exit 1
+fi
+
+echo "Installed ${INSTALL_PATH}"
+
+"${INSTALL_PATH}" --version
