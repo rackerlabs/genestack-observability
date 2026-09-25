@@ -419,12 +419,14 @@ find_listener_template() {
     local listener_name="$1"
     local source_dir
     local candidate
+    local candidate_listener_name
 
     for source_dir in \
         "${GATEWAY_LISTENER_SOURCE_DIR}" \
         "${GATEWAY_LISTENER_FALLBACK_DIR}"; do
         [[ -d "${source_dir}" ]] || continue
 
+        # Prefer conventional filenames when present.
         for candidate in \
             "${source_dir}/${listener_name}.json" \
             "${source_dir}/${listener_name}-https.json" \
@@ -434,6 +436,27 @@ find_listener_template() {
                 return 0
             fi
         done
+
+        # Listener patch filenames do not have to match the sectionName.
+        # Inspect the JSON patch content and match .[0].value.name.
+        while IFS= read -r -d '' candidate; do
+            candidate_listener_name="$(
+                yq eval -r '.[0].value.name // ""' \
+                    "${candidate}" 2>/dev/null || true
+            )"
+
+            if [[ "${candidate_listener_name}" == "${listener_name}" ]]; then
+                printf '%s\n' "${candidate}"
+                return 0
+            fi
+        done < <(
+            find "${source_dir}" \
+                -maxdepth 1 \
+                -type f \
+                -name '*.json' \
+                -print0 |
+            sort -z
+        )
     done
 
     return 1
@@ -553,9 +576,11 @@ seed_observability_routes() {
 listener_file_for_section() {
     local listener_name="$1"
     local candidate
+    local candidate_listener_name
 
     [[ -d "${GATEWAY_LISTENER_TARGET_DIR}" ]] || return 1
 
+    # Prefer conventional filenames when present.
     for candidate in \
         "${GATEWAY_LISTENER_TARGET_DIR}/${listener_name}.json" \
         "${GATEWAY_LISTENER_TARGET_DIR}/${listener_name}-https.json" \
@@ -565,6 +590,26 @@ listener_file_for_section() {
             return 0
         fi
     done
+
+    # Fall back to matching the listener name inside each JSON patch.
+    while IFS= read -r -d '' candidate; do
+        candidate_listener_name="$(
+            yq eval -r '.[0].value.name // ""' \
+                "${candidate}" 2>/dev/null || true
+        )"
+
+        if [[ "${candidate_listener_name}" == "${listener_name}" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done < <(
+        find "${GATEWAY_LISTENER_TARGET_DIR}" \
+            -maxdepth 1 \
+            -type f \
+            -name '*.json' \
+            -print0 |
+        sort -z
+    )
 
     return 1
 }
@@ -587,12 +632,17 @@ ensure_gateway_listener() {
 
     if ! kubectl -n "${gateway_namespace}" get gateway "${gateway_name}" \
         >/dev/null 2>&1; then
-        echo "Gateway ${gateway_namespace}/${gateway_name} does not exist yet; listener will not be patched."
-        return 0
+        echo "ERROR: Gateway ${gateway_namespace}/${gateway_name} does not exist; cannot install listener from:" >&2
+        echo "  ${listener_file}" >&2
+        return 1
     fi
 
     listener_name="$(jq -r '.[0].value.name // ""' "${listener_file}")"
-    [[ -n "${listener_name}" ]] || return 0
+    if [[ -z "${listener_name}" ]]; then
+        echo "ERROR: Listener patch does not contain .[0].value.name:" >&2
+        echo "  ${listener_file}" >&2
+        return 1
+    fi
 
     desired_listener="$(
         jq -c '.[0].value | {name, port, protocol, hostname, tls, allowedRoutes}' \
@@ -656,7 +706,6 @@ ensure_gateway_listener() {
 
 ensure_route_listeners() {
     local route_file="$1"
-    local parent_ref
     local gateway_name
     local gateway_namespace
     local listener_name
@@ -667,7 +716,16 @@ ensure_route_listeners() {
         gateway_namespace="${gateway_namespace:-envoy-gateway}"
 
         listener_file="$(listener_file_for_section "${listener_name}" || true)"
-        [[ -n "${listener_file}" ]] || continue
+
+        if [[ -z "${listener_file}" ]]; then
+            echo "ERROR: Route references Gateway listener '${listener_name}', but no matching listener patch was found:" >&2
+            echo "  route: ${route_file}" >&2
+            echo "  listener directory: ${GATEWAY_LISTENER_TARGET_DIR}" >&2
+            return 1
+        fi
+
+        echo "Ensuring Gateway listener ${gateway_namespace}/${gateway_name}:${listener_name}"
+        echo "  patch: ${listener_file}"
 
         ensure_gateway_listener \
             "${gateway_name}" \
