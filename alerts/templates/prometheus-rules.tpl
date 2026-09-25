@@ -22,6 +22,7 @@ metadata:
     app.kubernetes.io/instance: {{ $.Release.Name | quote }}
     app.kubernetes.io/managed-by: {{ $.Release.Service | quote }}
     genestack.io/rule-type: alerting
+  annotations:
     genestack.io/rule-source: {{ $path | quote }}
 spec:
 {{ $ruleSpec | toYaml | nindent 2 }}
@@ -53,6 +54,7 @@ metadata:
     app.kubernetes.io/instance: {{ $.Release.Name | quote }}
     app.kubernetes.io/managed-by: {{ $.Release.Service | quote }}
     genestack.io/rule-type: recording
+  annotations:
     genestack.io/rule-source: {{ $path | quote }}
 spec:
 {{ $ruleSpec | toYaml | nindent 2 }}
