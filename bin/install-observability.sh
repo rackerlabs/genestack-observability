@@ -127,9 +127,6 @@ component_enabled() {
 component_script() {
     local component="$1"
 
-    # All actual service installers live in genestack-observability.
-    # install-observability.sh itself may be shipped from either Genestack
-    # or genestack-observability.
     case "${component}" in
         monitoring-rgw-storage)
             printf '%s\n' \
@@ -142,6 +139,19 @@ component_script() {
         *)
             printf '%s\n' \
                 "${GENESTACK_OBSERVABILITY_DIR}/bin/install-${component}.sh"
+            ;;
+    esac
+}
+
+component_config_name() {
+    local component="$1"
+
+    case "${component}" in
+        openstack-exporter)
+            printf '%s\n' "openstack-api-exporter-chart"
+            ;;
+        *)
+            printf '%s\n' "${component}"
             ;;
     esac
 }
@@ -162,6 +172,11 @@ ensure_component_dependencies() {
 
                 echo "lokitool not found; installing the pinned version..."
                 "${installer}"
+            fi
+
+            if ! command -v lokitool >/dev/null 2>&1; then
+                echo "ERROR: lokitool installation completed but lokitool is still not available in PATH." >&2
+                exit 1
             fi
             ;;
     esac
@@ -187,18 +202,27 @@ ensure_kustomize_renderer() {
 
 ensure_component_site_config() {
     local component="$1"
-    local helm_source="${GENESTACK_OBSERVABILITY_DIR}/helm-configs/${component}"
-    local helm_target="${HELM_SITE_ROOT}/${component}"
-    local kustomize_source="${GENESTACK_OBSERVABILITY_DIR}/kustomize/${component}"
-    local kustomize_target="${KUSTOMIZE_SITE_ROOT}/${component}"
-    local kustomize_base_source="${kustomize_source}/base"
-    local kustomize_base_target="${kustomize_target}/base"
-    local kustomize_overlay_target="${kustomize_target}/overlay"
+    local config_name
+    local helm_source
+    local helm_target
+    local kustomize_source
+    local kustomize_target
+    local kustomize_base_source
+    local kustomize_base_target
+    local kustomize_overlay_target
+
+    config_name="$(component_config_name "${component}")"
+
+    helm_source="${GENESTACK_OBSERVABILITY_DIR}/helm-configs/${config_name}"
+    helm_target="${HELM_SITE_ROOT}/${config_name}"
+    kustomize_source="${GENESTACK_OBSERVABILITY_DIR}/kustomize/${config_name}"
+    kustomize_target="${KUSTOMIZE_SITE_ROOT}/${config_name}"
+    kustomize_base_source="${kustomize_source}/base"
+    kustomize_base_target="${kustomize_target}/base"
+    kustomize_overlay_target="${kustomize_target}/overlay"
 
     mkdir -p "${HELM_SITE_ROOT}" "${KUSTOMIZE_SITE_ROOT}"
 
-    # Fresh lab behavior only: seed a complete Helm service directory when
-    # absent. Existing /etc/genestack service trees are never merged.
     if [[ -d "${helm_source}" ]]; then
         if [[ -e "${helm_target}" || -L "${helm_target}" ]]; then
             echo "Keeping existing Helm service configuration: ${helm_target}"
@@ -266,6 +290,7 @@ list_components() {
 install_component() {
     local component="$1"
     local script
+    local config_name
     local kustomize_post_renderer_args
 
     if ! component_exists "${component}"; then
@@ -286,18 +311,17 @@ install_component() {
     ensure_component_dependencies "${component}"
     ensure_component_site_config "${component}"
 
-    kustomize_post_renderer_args="observability/${component}/overlay"
+    config_name="$(component_config_name "${component}")"
+    kustomize_post_renderer_args="observability/${config_name}/overlay"
 
     echo
     echo "============================================================"
     echo "Installing observability component: ${component}"
     echo "Implementation: ${script}"
+    echo "Configuration: ${config_name}"
     echo "============================================================"
     echo
 
-    # monitoring-common.sh should consume KUSTOMIZE_POST_RENDERER_ARGS when it
-    # builds the Helm command. Export it per component so the shared
-    # post-renderer resolves /etc/genestack/kustomize/observability/<service>.
     KUSTOMIZE_POST_RENDERER_ARGS="${kustomize_post_renderer_args}" \
         "${script}"
 }

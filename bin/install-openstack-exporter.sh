@@ -17,14 +17,12 @@ GLOBAL_OVERRIDES_DIR="${GENESTACK_OVERRIDES_DIR}/helm-configs/global_overrides"
 
 source "$(dirname "$0")/monitoring-common.sh"
 
-# Check if chart directory exists.
 if [[ ! -d "${CHART_DIR}" ]]; then
     echo "ERROR: Chart directory does not exist:"
     echo "  ${CHART_DIR}"
     exit 1
 fi
 
-# Find an unused Kubernetes Service port.
 find_unused_port() {
     local port=49152
 
@@ -45,9 +43,6 @@ find_unused_port() {
     done
 }
 
-# Reuse the currently configured service port when the Helm release already
-# exists. This keeps repeated bootstrap/install runs idempotent instead of
-# selecting a new port on every upgrade.
 get_existing_service_port() {
     local port=""
 
@@ -121,6 +116,27 @@ monitoring_ensure_keystone_auth_openstack_exporter_secret() {
     | kubectl apply -f -
 }
 
+add_override_directory() {
+    local directory="$1"
+    local file
+    local filename
+
+    [[ -d "${directory}" ]] || return 0
+
+    shopt -s nullglob
+    for file in "${directory}"/*.yaml; do
+        filename="$(basename "${file}")"
+
+        if [[ "${filename}" == "Chart.yaml" ]]; then
+            continue
+        fi
+
+        echo " - ${file}"
+        overrides_args+=("-f" "${file}")
+    done
+    shopt -u nullglob
+}
+
 monitoring_ensure_namespace "${SERVICE_NAMESPACE}"
 monitoring_label_namespace_for_talos "${SERVICE_NAMESPACE}"
 
@@ -147,24 +163,26 @@ done
 
 if [[ -d "${GLOBAL_OVERRIDES_DIR}" ]]; then
     echo "Including global overrides from directory: ${GLOBAL_OVERRIDES_DIR}"
-
-    shopt -s nullglob
-    for file in "${GLOBAL_OVERRIDES_DIR}"/*.yaml; do
-        echo " - ${file}"
-        overrides_args+=("-f" "${file}")
-    done
-    shopt -u nullglob
+    add_override_directory "${GLOBAL_OVERRIDES_DIR}"
 fi
 
 if [[ -d "${SERVICE_CUSTOM_OVERRIDES}" ]]; then
     echo "Including overrides from service config directory: ${SERVICE_CUSTOM_OVERRIDES}"
+    add_override_directory "${SERVICE_CUSTOM_OVERRIDES}"
+fi
 
-    shopt -s nullglob
-    for file in "${SERVICE_CUSTOM_OVERRIDES}"/*.yaml; do
-        echo " - ${file}"
-        overrides_args+=("-f" "${file}")
-    done
-    shopt -u nullglob
+if [[ ! -f "${GENESTACK_OVERRIDES_DIR}/kustomize/kustomize.sh" ]]; then
+    echo "ERROR: Kustomize post-renderer is missing:"
+    echo "  ${GENESTACK_OVERRIDES_DIR}/kustomize/kustomize.sh"
+    exit 1
+fi
+
+KUSTOMIZE_OVERLAY_PATH="${GENESTACK_OVERRIDES_DIR}/kustomize/${KUSTOMIZE_POST_RENDERER_ARGS}"
+
+if [[ ! -f "${KUSTOMIZE_OVERLAY_PATH}/kustomization.yaml" ]]; then
+    echo "ERROR: Kustomize overlay is missing:"
+    echo "  ${KUSTOMIZE_OVERLAY_PATH}/kustomization.yaml"
+    exit 1
 fi
 
 helm_command=(
