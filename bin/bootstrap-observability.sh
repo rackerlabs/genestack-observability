@@ -742,10 +742,33 @@ apply_observability_routes() {
     fi
 }
 
+ensure_monitoring_namespace_for_routes() {
+    if ! command -v kubectl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! kubectl get namespace monitoring >/dev/null 2>&1; then
+        echo "Creating monitoring namespace before applying observability routes..."
+        kubectl create namespace monitoring
+    fi
+}
+
 if [[ "${MANAGE_ROUTES}" == "true" ]]; then
     echo
     echo "Preparing observability Gateway API routes..."
     seed_observability_routes
+
+    # Some observability components, notably loki-rules, discover their endpoint
+    # from an HTTPRoute during installation. Apply the routes before running the
+    # component installer so a fresh bootstrap does not depend on routes that
+    # would otherwise only be created after installation completes.
+    ensure_monitoring_namespace_for_routes
+
+    echo
+    echo "Applying observability Gateway API routes before component installation..."
+    apply_observability_routes
+else
+    echo "Skipping observability Gateway API routes (--no-routes)."
 fi
 
 echo
@@ -767,14 +790,12 @@ if [[ "${RUN_INSTALL}" == "true" ]]; then
     fi
 
     "${INSTALL_SCRIPT}"
+
+    if [[ "${MANAGE_ROUTES}" == "true" ]]; then
+        echo
+        echo "Reconciling observability Gateway API routes after component installation..."
+        apply_observability_routes
+    fi
 else
     echo "Skipping observability installation (--no-install)."
-fi
-
-if [[ "${MANAGE_ROUTES}" == "true" ]]; then
-    echo
-    echo "Applying observability Gateway API routes..."
-    apply_observability_routes
-else
-    echo "Skipping observability Gateway API routes (--no-routes)."
 fi
