@@ -429,21 +429,3 @@ Do not switch ruler storage to local filesystem storage for this workflow.
 This can eventually be orchestrated by a higher-level observability deployment script while retaining the individual scripts for troubleshooting and targeted updates.
 
 ---
-
-# Future cleanup
-
-After the initial migration is stable, Prometheus source rules can optionally be converted from:
-
-```yaml
-additionalPrometheusRulesMap:
-  some-rule:
-    groups:
-```
-
-to native rule files:
-
-```yaml
-groups:
-```
-
-This is not required for version one and should be treated as a separate cleanup from the deployment migration.
