@@ -19,9 +19,6 @@ KUSTOMIZE_SITE_DIR="${KUSTOMIZE_SITE_ROOT}/observability"
 KUSTOMIZE_RENDERER_SOURCE="${GENESTACK_DIR}/base-kustomize/kustomize.sh"
 KUSTOMIZE_RENDERER_TARGET="${KUSTOMIZE_SITE_ROOT}/kustomize.sh"
 
-DEFAULT_COMPONENTS_FILE="${GENESTACK_OBSERVABILITY_DIR}/bin/observability-components.yaml"
-SITE_COMPONENTS_FILE="${GENESTACK_CONFIG_DIR}/observability-components.yaml"
-
 GATEWAY_ROUTE_SOURCE_DIR="${GENESTACK_OBSERVABILITY_DIR}/etc/gateway-api/routes"
 GATEWAY_ROUTE_TARGET_DIR="${GENESTACK_CONFIG_DIR}/gateway-api/routes"
 GATEWAY_LISTENER_SOURCE_DIR="${GENESTACK_OBSERVABILITY_DIR}/etc/gateway-api/listeners"
@@ -437,20 +434,6 @@ seed_helm_service_configs
 echo
 echo "Seeding missing observability Kustomize service configuration..."
 seed_kustomize_service_configs
-
-if [[ ! -f "${SITE_COMPONENTS_FILE}" ]]; then
-    if [[ ! -f "${DEFAULT_COMPONENTS_FILE}" ]]; then
-        echo "ERROR: Default component configuration is missing:"
-        echo "  ${DEFAULT_COMPONENTS_FILE}"
-        exit 1
-    fi
-
-    cp "${DEFAULT_COMPONENTS_FILE}" "${SITE_COMPONENTS_FILE}"
-    echo "Created site component configuration: ${SITE_COMPONENTS_FILE}"
-else
-    echo "Keeping existing site component configuration: ${SITE_COMPONENTS_FILE}"
-fi
-
 
 resolve_gateway_domain() {
     local domain=""
