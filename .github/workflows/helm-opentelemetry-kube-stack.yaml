@@ -4,8 +4,8 @@ name: Helm GitHub Actions for Opentelemetry
 on:
   pull_request:
     paths:
-      - base-helm-configs/opentelemetry-kube-stack/**
-      - base-kustomize/opentelemetry-kube-stack/**
+      - helm-configs/opentelemetry-kube-stack/**
+      - kustomize/opentelemetry-kube-stack/**
       - helm-chart-versions.yaml
       - .github/workflows/helm-opentelemetry-kube-stack.yaml
 jobs:

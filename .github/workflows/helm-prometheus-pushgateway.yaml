@@ -4,8 +4,8 @@ name: Helm GitHub Actions for Prometheus Pushgateway
 on:
   pull_request:
     paths:
-      - base-helm-configs/prometheus-pushgateway/**
-      - base-kustomize/prometheus-pushgateway/**
+      - helm-configs/prometheus-pushgateway/**
+      - kustomize/prometheus-pushgateway/**
       - helm-chart-versions.yaml
       - .github/workflows/helm-prometheus-pushgateway.yaml
 jobs:

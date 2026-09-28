@@ -4,8 +4,8 @@ name: Helm GitHub Actions for Tempo
 on:
   pull_request:
     paths:
-      - base-helm-configs/tempo/**
-      - base-kustomize/tempo/**
+      - helm-configs/tempo/**
+      - kustomize/tempo/**
       - helm-chart-versions.yaml
       - .github/workflows/helm-grafana-tempo.yaml
 jobs:

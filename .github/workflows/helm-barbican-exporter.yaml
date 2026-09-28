@@ -3,8 +3,8 @@ name: Helm GitHub Actions for Barbican Exporter
 on:
   pull_request:
     paths:
-      - base-helm-configs/barbican-exporter/**
-      - base-kustomize/barbican-exporter/**
+      - helm-configs/barbican-exporter/**
+      - kustomize/barbican-exporter/**
       - helm-chart-versions.yaml
       - .github/workflows/helm-barbican-exporter.yaml
 jobs:
@@ -47,7 +47,7 @@ jobs:
             --namespace=openstack \
             --wait \
             --timeout 120m \
-            -f ${{ github.workspace }}/base-helm-configs/barbican-exporter/barbican-exporter-helm-overrides.yaml > /tmp/rendered.yaml
+            -f ${{ github.workspace }}/helm-configs/barbican-exporter/barbican-exporter-helm-overrides.yaml > /tmp/rendered.yaml
       - name: Return helm Build
         uses: actions/upload-artifact@v4
         with:

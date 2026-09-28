@@ -4,8 +4,8 @@ name: Helm GitHub Actions for openstack-metrics-exporter
 on:
   pull_request:
     paths:
-      - base-helm-configs/openstack-metrics-exporter/**
-      - base-kustomize/openstack-metrics-exporter/**
+      - helm-configs/openstack-metrics-exporter/**
+      - kustomize/openstack-metrics-exporter/**
       - .github/workflows/helm-prometheus-openstack-metrics-exporter.yaml
 jobs:
   helm:

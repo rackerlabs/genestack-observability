@@ -4,7 +4,7 @@ name: Helm GitHub Actions for loki
 on:
   pull_request:
     paths:
-      - base-helm-configs/loki/**
+      - helm-configs/loki/**
       - helm-chart-versions.yaml
       - .github/workflows/helm-loki.yaml
 jobs:
