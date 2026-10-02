@@ -5,33 +5,98 @@ additionalPrometheusRulesMap:
         rules:
           - alert: cpu-throttling-high-warning
             expr: >-
-              sum(increase(container_cpu_cfs_throttled_periods_total{container!="", job="kubelet", metrics_path="/metrics/cadvisor", }[5m])) without (id, metrics_path, name, image, endpoint, job, node) / on (cluster, namespace, pod, container, instance) group_left sum(increase(container_cpu_cfs_periods_total{job="kubelet", metrics_path="/metrics/cadvisor", }[5m])) without (id, metrics_path, name, image, endpoint, job, node) > ( 25 / 100 )
+              (
+                sum by (cluster, namespace, pod, container, host_name) (
+                  rate(container_cpu_cfs_throttled_seconds_total{
+                    container!="",
+                    cluster!="",
+                    job="kubelet",
+                    metrics_path="/metrics/cadvisor"
+                  }[5m])
+                ) > 0.10
+              )
+              and on (cluster, namespace, pod, container, host_name)
+              (
+                (
+                  sum by (cluster, namespace, pod, container, host_name) (
+                    rate(container_cpu_cfs_throttled_periods_total{
+                      container!="",
+                      cluster!="",
+                      job="kubelet",
+                      metrics_path="/metrics/cadvisor"
+                    }[5m])
+                  )
+                  /
+                  sum by (cluster, namespace, pod, container, host_name) (
+                    rate(container_cpu_cfs_periods_total{
+                      container!="",
+                      cluster!="",
+                      job="kubelet",
+                      metrics_path="/metrics/cadvisor"
+                    }[5m])
+                  )
+                ) > 0.25
+              )
             for: 5m
             labels:
               severity: warning
               group_name: cpu-throttling-high
-              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+              node_hostname: '{{ $labels.host_name }}'
             annotations:
               description: >-
-                {{ $value | humanizePercentage }} throttling of CPU in namespace {{ $labels.namespace }} for
-                container {{ $labels.container }} in pod {{ $labels.pod }}.
-                This warning alert fires after 5m.
+                {{ $value | humanizePercentage }} of wall-clock time is being CPU throttled
+                in namespace {{ $labels.namespace }} for container {{ $labels.container }}
+                in pod {{ $labels.pod }}. More than 25% of CPU scheduling periods are also
+                experiencing throttling. This warning alert fires after 5m.
               runbook_url: default_runbook_url
-              summary: Processes experience elevated CPU throttling.
+              summary: Container is experiencing sustained CPU throttling.
               dashboard_url: default_dashboard_url
+
           - alert: cpu-throttling-high-critical
             expr: >-
-              sum(increase(container_cpu_cfs_throttled_periods_total{container!="", job="kubelet", metrics_path="/metrics/cadvisor", }[5m])) without (id, metrics_path, name, image, endpoint, job, node) / on (cluster, namespace, pod, container, instance) group_left sum(increase(container_cpu_cfs_periods_total{job="kubelet", metrics_path="/metrics/cadvisor", }[5m])) without (id, metrics_path, name, image, endpoint, job, node) > ( 25 / 100 )
+              (
+                sum by (cluster, namespace, pod, container, host_name) (
+                  rate(container_cpu_cfs_throttled_seconds_total{
+                    container!="",
+                    cluster!="",
+                    job="kubelet",
+                    metrics_path="/metrics/cadvisor"
+                  }[5m])
+                ) > 0.25
+              )
+              and on (cluster, namespace, pod, container, host_name)
+              (
+                (
+                  sum by (cluster, namespace, pod, container, host_name) (
+                    rate(container_cpu_cfs_throttled_periods_total{
+                      container!="",
+                      cluster!="",
+                      job="kubelet",
+                      metrics_path="/metrics/cadvisor"
+                    }[5m])
+                  )
+                  /
+                  sum by (cluster, namespace, pod, container, host_name) (
+                    rate(container_cpu_cfs_periods_total{
+                      container!="",
+                      cluster!="",
+                      job="kubelet",
+                      metrics_path="/metrics/cadvisor"
+                    }[5m])
+                  )
+                ) > 0.50
+              )
             for: 10m
             labels:
               severity: critical
               group_name: cpu-throttling-high
-              node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+              node_hostname: '{{ $labels.host_name }}'
             annotations:
               description: >-
-                {{ $value | humanizePercentage }} throttling of CPU in namespace {{ $labels.namespace }} for
-                container {{ $labels.container }} in pod {{ $labels.pod }}.
-                This critical alert fires after 10m.
+                {{ $value | humanizePercentage }} of wall-clock time is being CPU throttled
+                in namespace {{ $labels.namespace }} for container {{ $labels.container }}
+                in pod {{ $labels.pod }}. More than 50% of CPU scheduling periods are also
+                experiencing throttling. This critical alert fires after 10m.
               runbook_url: default_runbook_url
-              summary: Processes experience elevated CPU throttling.
+              summary: Container is experiencing severe sustained CPU throttling.
               dashboard_url: default_dashboard_url
