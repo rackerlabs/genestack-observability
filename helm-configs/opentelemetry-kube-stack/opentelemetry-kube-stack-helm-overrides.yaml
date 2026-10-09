@@ -750,6 +750,32 @@ collectors:
               if: 'body matches "^[\\d\\.]+ - " and attributes.service == "horizon"'
               on_error: send_quiet
 
+            # Some Oslo formatters emit a duplicated millisecond value,
+            # e.g. 2026-10-08 04:23:59,713.713. Parse the first value as
+            # the timestamp, ignoring the redundant suffix.
+            - type: regex_parser
+              id: parser-openstack-comma-timestamp
+              regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(?:\.\d{3})? (?P<pid>\d+) (?P<severity>\w+) (?P<component>[\w\.\-]+) \[(?P<request_context>[^\]]+)\] (?P<message>.*)$'
+              parse_from: body
+              timestamp:
+                parse_from: attributes.timestamp
+                layout: '%Y-%m-%d %H:%M:%S,%L'
+              severity:
+                parse_from: attributes.severity
+              if: 'attributes.message == nil and body matches "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}"'
+              on_error: send_quiet
+            - type: regex_parser
+              id: parser-openstack-comma-no-context
+              regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(?:\.\d{3})? (?P<pid>\d+) (?P<severity>\w+) (?P<component>[\w\.\-]+) (?P<message>.*)$'
+              parse_from: body
+              timestamp:
+                parse_from: attributes.timestamp
+                layout: '%Y-%m-%d %H:%M:%S,%L'
+              severity:
+                parse_from: attributes.severity
+              if: 'attributes.message == nil and body matches "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}"'
+              on_error: send_quiet
+
             - type: regex_parser
               id: parser-openstack-standard
               regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) (?P<pid>\d+) (?P<severity>\w+) (?P<component>[\w\.\-]+) \[(?P<request_context>[^\]]+)\] (?P<message>.*)$'
