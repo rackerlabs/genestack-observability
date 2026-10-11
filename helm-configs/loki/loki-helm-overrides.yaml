@@ -57,6 +57,7 @@ loki:
     per_stream_rate_limit: 10MB
     per_stream_rate_limit_burst: 40MB
     max_label_names_per_series: 40
+    max_global_streams_per_user: 50000
     otlp_config:
       resource_attributes:
         ignore_defaults: false
@@ -100,12 +101,18 @@ singleBinary:
 
 write:
   replicas: 0
+  nodeSelector:
+    openstack-control-plane: enabled
 
 read:
   replicas: 0
+  nodeSelector:
+    openstack-control-plane: enabled
 
 backend:
   replicas: 0
+  nodeSelector:
+    openstack-control-plane: enabled
 
 gateway:
   nodeSelector:
