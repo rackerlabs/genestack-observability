@@ -1,0 +1,166 @@
+additionalPrometheusRulesMap:
+  f5-bigip-ha:
+    groups:
+    - name: f5-bigip-ha
+      rules:
+      - alert: f5-bigip-snmp-telemetry-unavailable-warning
+        expr: >-
+          sum by (namespace, job, receiver) (
+            increase(otelcol_scraper_scraped_metric_points_total{
+              receiver=~"snmp/f5-.+", scraper="snmp"
+            }[2m])
+          ) == 0
+          and on (namespace, job, receiver)
+          sum by (namespace, job, receiver) (
+            otelcol_scraper_scraped_metric_points_total{
+              receiver=~"snmp/f5-.+", scraper="snmp"
+            } offset 2m
+          ) >= 0
+        labels:
+          severity: warning
+          group_name: f5-bigip-ha
+          correlation_key: f5-snmp/{{ $labels.receiver }}
+          correlation_scope: f5-snmp
+        annotations:
+          description: >-
+            Receiver {{ $labels.receiver }} has produced no SNMP metric points for 2 minutes.
+            This can indicate network, authentication, device, or Collector receiver failure.
+          runbook_url: default_runbook_url
+          summary: F5 SNMP telemetry is unavailable for {{ $labels.receiver }}.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-snmp-telemetry-unavailable-critical
+        expr: >-
+          sum by (namespace, job, receiver) (
+            increase(otelcol_scraper_scraped_metric_points_total{
+              receiver=~"snmp/f5-.+", scraper="snmp"
+            }[5m])
+          ) == 0
+          and on (namespace, job, receiver)
+          sum by (namespace, job, receiver) (
+            otelcol_scraper_scraped_metric_points_total{
+              receiver=~"snmp/f5-.+", scraper="snmp"
+            } offset 5m
+          ) >= 0
+        labels:
+          severity: critical
+          group_name: f5-bigip-ha
+          correlation_key: f5-snmp/{{ $labels.receiver }}
+          correlation_scope: f5-snmp
+        annotations:
+          description: >-
+            Receiver {{ $labels.receiver }} has produced no SNMP metric points for 5 minutes.
+            This can indicate network, authentication, device, or Collector receiver failure.
+          runbook_url: default_runbook_url
+          summary: F5 SNMP telemetry is unavailable for {{ $labels.receiver }}.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-unhealthy-state-warning
+        expr: f5_bigip_failover_state >= 0 and f5_bigip_failover_state <= 2
+        for: 2m
+        labels:
+          severity: warning
+          group_name: f5-bigip-ha
+          correlation_key: f5-member/{{ $labels.environment }}/{{ $labels.ha_pair }}/{{ $labels.device }}
+          correlation_scope: f5-member
+        annotations:
+          description: >-
+            F5 {{ $labels.device }} in pair {{ $labels.ha_pair }} (environment
+            {{ $labels.environment }}) reports failover state
+            {{ printf "%.0f" $value }}; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+          runbook_url: default_runbook_url
+          summary: F5 {{ $labels.device }} reports an unhealthy failover state.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-unhealthy-state-critical
+        expr: f5_bigip_failover_state >= 0 and f5_bigip_failover_state <= 2
+        for: 5m
+        labels:
+          severity: critical
+          group_name: f5-bigip-ha
+          correlation_key: f5-member/{{ $labels.environment }}/{{ $labels.ha_pair }}/{{ $labels.device }}
+          correlation_scope: f5-member
+        annotations:
+          description: >-
+            F5 {{ $labels.device }} in pair {{ $labels.ha_pair }} (environment
+            {{ $labels.environment }}) reports failover state
+            {{ printf "%.0f" $value }}; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+          runbook_url: default_runbook_url
+          summary: F5 {{ $labels.device }} reports an unhealthy failover state.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-ha-pair-no-active-warning
+        expr: >-
+          max by (environment, ha_pair) (f5_bigip_failover_state)
+          unless on (environment, ha_pair)
+          max by (environment, ha_pair) (f5_bigip_failover_state == 4)
+        for: 2m
+        labels:
+          severity: warning
+          group_name: f5-bigip-ha
+          correlation_key: f5-pair/{{ $labels.environment }}/{{ $labels.ha_pair }}/active
+          correlation_scope: f5-pair
+        annotations:
+          description: >-
+            No observed member of F5 pair {{ $labels.ha_pair }} in environment
+            {{ $labels.environment }} has reported active state 4 for 2 minutes.
+          runbook_url: default_runbook_url
+          summary: F5 HA pair {{ $labels.ha_pair }} has no active member.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-ha-pair-no-active-critical
+        expr: >-
+          max by (environment, ha_pair) (f5_bigip_failover_state)
+          unless on (environment, ha_pair)
+          max by (environment, ha_pair) (f5_bigip_failover_state == 4)
+        for: 5m
+        labels:
+          severity: critical
+          group_name: f5-bigip-ha
+          correlation_key: f5-pair/{{ $labels.environment }}/{{ $labels.ha_pair }}/active
+          correlation_scope: f5-pair
+        annotations:
+          description: >-
+            No observed member of F5 pair {{ $labels.ha_pair }} in environment
+            {{ $labels.environment }} has reported active state 4 for 5 minutes.
+          runbook_url: default_runbook_url
+          summary: F5 HA pair {{ $labels.ha_pair }} has no active member.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-ha-pair-no-standby-warning
+        expr: >-
+          max by (environment, ha_pair) (f5_bigip_failover_state)
+          unless on (environment, ha_pair)
+          max by (environment, ha_pair) (f5_bigip_failover_state == 3)
+        for: 5m
+        labels:
+          severity: warning
+          group_name: f5-bigip-ha
+          correlation_key: f5-pair/{{ $labels.environment }}/{{ $labels.ha_pair }}/standby
+          correlation_scope: f5-pair
+        annotations:
+          description: >-
+            No observed member of F5 pair {{ $labels.ha_pair }} in environment
+            {{ $labels.environment }} has reported standby state 3 for 5 minutes.
+          runbook_url: default_runbook_url
+          summary: F5 HA pair {{ $labels.ha_pair }} has no standby member.
+          dashboard_url: default_dashboard_url
+
+      - alert: f5-bigip-ha-pair-no-standby-critical
+        expr: >-
+          max by (environment, ha_pair) (f5_bigip_failover_state)
+          unless on (environment, ha_pair)
+          max by (environment, ha_pair) (f5_bigip_failover_state == 3)
+        for: 15m
+        labels:
+          severity: critical
+          group_name: f5-bigip-ha
+          correlation_key: f5-pair/{{ $labels.environment }}/{{ $labels.ha_pair }}/standby
+          correlation_scope: f5-pair
+        annotations:
+          description: >-
+            No observed member of F5 pair {{ $labels.ha_pair }} in environment
+            {{ $labels.environment }} has reported standby state 3 for 15 minutes.
+          runbook_url: default_runbook_url
+          summary: F5 HA pair {{ $labels.ha_pair }} has no standby member.
+          dashboard_url: default_dashboard_url
