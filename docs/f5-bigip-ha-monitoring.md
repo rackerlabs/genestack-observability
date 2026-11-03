@@ -242,18 +242,21 @@ Python test runner.
 
 ## Static validation for an environment
 
-Render with the same base and environment values used by deployment. The exact
-paths are repository-specific; this pattern avoids printing secrets:
+Render with the same base and environment values used by the current
+observability deployment. `genestack-observability` owns the base values, while
+the environment repository supplies global and service-specific overrides.
+The service override now lives below `helm-configs/observability/`. This
+pattern avoids printing secrets:
 
 ```shell
 helm template opentelemetry-kube-stack \
   open-telemetry/opentelemetry-kube-stack \
   --version <chart-version> \
   --namespace monitoring \
-  --values <genestack>/base-helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
+  --values <genestack-observability>/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
   --values <environment-overrides>/helm-configs/global_overrides/endpoints.yaml \
   --values <environment-overrides>/helm-configs/global_overrides/logger.yaml \
-  --values <environment-overrides>/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
+  --values <environment-overrides>/helm-configs/observability/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
   > /tmp/opentelemetry-rendered.yaml
 
 yq 'select(.kind == "OpenTelemetryCollector") |
