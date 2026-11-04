@@ -331,4 +331,3 @@ reviewed endpoint through the same process and confirm the counter resumes and
 alerts clear. An equivalent bad-credential test should use a temporary Secret
 created through the approved secret workflow; never print or commit either the
 original or test credentials.
-
