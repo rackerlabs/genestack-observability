@@ -220,8 +220,11 @@ underscore-separated Prometheus name.
 ## Per-receiver poll health
 
 Prometheus does not scrape the F5, so it has no exporter-style `up` metric for
-an SNMP attempt. Prometheus directly scrapes Collector self-telemetry through
-the Deployment Collector ServiceMonitor instead. The selected signal is:
+an SNMP attempt. The F5 failover-state metric reaches Prometheus through the
+Collector's `prometheusremotewrite` exporter. Separately, Prometheus directly
+scrapes the Collector's self-telemetry through the Deployment Collector
+ServiceMonitor. The telemetry-unavailable alerts use this directly scraped
+signal:
 
 ```promql
 otelcol_scraper_scraped_metric_points_total{
