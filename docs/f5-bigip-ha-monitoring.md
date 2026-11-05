@@ -1,17 +1,17 @@
 # F5 BIG-IP HA monitoring
 
 This document is the source of truth for the reusable F5 BIG-IP HA monitoring
-and alerting design. Runtime Collector configuration remains in each
-environment repository. The reusable Prometheus rules live in this repository
-and are deployed by the Genestack Prometheus rules chart.
+and alerting design. Environment specific Collector configuration remains in
+each environment's specific overrides. The reusable Prometheus rules live in
+here in the genestack-observability repository and are deployed by the Genestack
+Prometheus rules chart.
 
 ## Architecture and ownership
 
-Each environment has one F5 HA pair with two members. A centralized
-OpenTelemetry Deployment Collector polls one scalar from each member through
-SNMPv3 over outbound UDP/161. The samples pass through the existing metrics
-processing and Prometheus Remote Write path. Prometheus evaluates the reusable
-rules in
+Each environment has one F5 HA pair with two members. The centralized
+OpenTelemetry Deployment Collector polls one SNMPv3 scalar from each member over
+UDP/161. The polled samples pass through the existing metrics processing and
+Prometheus Remote Write path. Prometheus evaluates the reusable rules in
 [`../alerts/prometheus-alerts/f5/f5-bigip-ha.yaml`](../alerts/prometheus-alerts/f5/f5-bigip-ha.yaml),
 and Alertmanager delivers the resulting alerts.
 
@@ -21,15 +21,17 @@ F5 BIG-IP pair -- SNMPv3/UDP 161 --> OTel Deployment Collector
              --> Prometheus rules --> Alertmanager
 ```
 
-The node-local Collector DaemonSet must not contain these receivers. Otherwise,
-every node would poll both external devices and remote-write duplicate series.
-The Deployment Collector must have one replica, providing one logical poller
-for each F5. There is one named receiver, resource processor, and metrics
-pipeline per member so that member identity cannot leak between streams.
+The Collector DaemonSet, which places a pod on each node, must not contain these
+receivers. Otherwise, every node would poll both external devices and
+remote-write duplicate series. The Deployment Collector must have one replica,
+providing one logical poller for each F5. There is one named receiver, resource
+processor, and metrics pipeline per member so that member identity cannot leak
+between streams.
 
 The implementation uses the Collector chart's existing arbitrary receiver,
 processor, pipeline, environment-variable, and Secret extension points. No
-F5-specific Genestack change or separate SNMP exporter is required.
+F5-specific base Genestack change, site-specific overrides notwithstanding, or
+separate SNMP exporter is required.
 
 ## Environment contract
 
@@ -45,20 +47,19 @@ design:
 | `ha_pair` | `<ha-pair-name>` | `<ha-pair-name>` |
 
 Receiver IDs and `device` values must be meaningful, stable names rather than
-management addresses. The shared receiver selector is
-`receiver=~"snmp/f5-.+"`. Each environment also supplies the name of its
-credentials Secret.
+management addresses. The shared receiver selector is `receiver=~"snmp/f5-.+"`.
+Each environment also supplies the name of its credentials Secret.
 
-Because Helm merges mappings but replaces lists, an environment override may
-add receiver, processor, and pipeline mappings without copying the base
-Collector configuration. Any overridden lists, including environment-variable
-or pipeline processor/exporter lists, must retain the required base entries.
+Because Helm merges mappings but replaces lists, an environment override may add
+receiver, processor, and pipeline mappings without copying the base Collector
+configuration. Any overridden lists, including environment-variable or pipeline
+processor/exporter lists, must retain the required base entries.
 
 ## Per-environment override layout
 
 Start from
 [`../helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-f5-bigip-snmp-overrides.yaml.example`](../helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-f5-bigip-snmp-overrides.yaml.example).
-Copy it into the environment repository at:
+Place it in the general Genestack environment overrides at:
 
 ```text
 helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml
@@ -67,9 +68,11 @@ helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml
 Replace every angle-bracketed placeholder with that environment's two device
 names, management endpoints, environment name, and HA-pair name. Keep the
 `snmp/f5-` prefix on receiver IDs: the telemetry-unavailable rules use that
-prefix to select the two receivers. The copied file contains most of the F5
-configuration because Helm can merge its receiver, processor, and pipeline
-mappings with the mappings in the Genestack base values.
+prefix to select the two receivers. The environment file contains most of the
+F5 configuration in one place: it supplies the F5-specific receiver, processor,
+and pipeline mappings once, and Helm adds those uniquely named mappings to the
+unrelated mappings in the Genestack base values. It does not duplicate the F5
+configuration.
 
 The credentials are the exception. Add the following three entries to the
 existing `collectors.deployment.env` list in the environment's main service
@@ -105,14 +108,16 @@ Do not put those three entries in a small standalone values file unless that
 file also contains every other required deployment environment variable. Helm
 replaces the entire `env` list with the last supplied list instead of appending
 items. Omitting the existing entries can therefore remove credentials used by
-other Collector receivers. In contrast, the dedicated F5 file adds uniquely
-named mappings and does not have to repeat unrelated Collector configuration.
+other Collector receivers. Most of the environment specific configuration can
+reside in a dedicated file because it doesn't have to replace any lists, only
+adding uniquely named mappings doesn't need to repeat unrelated Collector
+configuration.
 
 The standard OpenTelemetry installer loads every `*.yaml` file in the base,
-global, and environment service-override directories. Consequently, the copied
-`f5-bigip-snmp.yaml` is included automatically during deployment. The source
-template ends in `.yaml.example`, so the installer does not deploy it from the
-base directory.
+global, and environment service-override directories. So, the copied
+`f5-bigip-snmp.yaml` is gets included automatically during deployment. The
+source template ends in `.yaml.example`, so the installer does not deploy it
+from the base directory.
 
 Before deploying, the environment should therefore contain both files:
 
@@ -245,16 +250,20 @@ This signal has deliberate limits:
 - If the entire Deployment Collector or its ServiceMonitor disappears, the
   receiver-labelled counters disappear too; a separate platform-owned
   Collector-availability alert must cover that condition.
-- Removing a receiver from configuration also removes the series. An
-  inventory-derived expected-target metric would be required to name a target
-  that never existed in self-telemetry.
+- Removing a receiver from configuration also removes its series, leaving
+  Prometheus with no record that the target should exist. Alerting on that
+  condition would require a separate metric, generated from deployment
+  inventory, that lists the expected targets. This limitation has little
+  practical impact when receiver configuration is source-controlled and
+  deployment validation confirms every expected receiver. It primarily affects
+  receivers that are removed, renamed, or never successfully created.
 - A Prometheus Remote Write failure can make the state metric stale while the
   directly scraped poll counter continues increasing. Remote Write health is a
   separate platform concern.
 
 The F5 rule set intentionally does not add generic Collector-down or Remote
-Write alerts. The next clean improvement for perfect first-deployment coverage
-would be an expected-target metric generated from deployment inventory.
+Write alerts. A possible clean next improvement for perfect first-deployment
+coverage would be an expected-target metric generated from deployment inventory.
 
 ## Alert policy
 
@@ -349,24 +358,38 @@ Render with the same base and environment values used by the current
 observability deployment. `genestack-observability` owns the base values, while
 the environment repository supplies global and service-specific overrides.
 The service override now lives below `helm-configs/observability/`. This
-pattern avoids printing secrets:
+pattern avoids printing secrets. It assumes environment overrides at /etc/genestack
+and genestack-observability at /opt/genestack-observability, the default configuration:
 
 ```shell
 helm template opentelemetry-kube-stack \
   open-telemetry/opentelemetry-kube-stack \
-  --version <chart-version> \
+  --version $(yq .charts.opentelemetry-kube-stack /etc/genestack/helm-chart-versions.yaml) \
   --namespace monitoring \
-  --values <genestack-observability>/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
-  --values <environment-overrides>/helm-configs/global_overrides/endpoints.yaml \
-  --values <environment-overrides>/helm-configs/global_overrides/logger.yaml \
-  --values <environment-overrides>/helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml \
-  --values <environment-overrides>/helm-configs/observability/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
+  --values /opt/genestack-observability/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
+  --values /etc/genestack/helm-configs/global_overrides/endpoints.yaml \
+  --values /etc/genestack/helm-configs/global_overrides/logger.yaml \
+  --values /etc/genestack/helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml \
+  --values /etc/genestack/helm-configs/observability/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
   > /tmp/opentelemetry-rendered.yaml
 
 yq 'select(.kind == "OpenTelemetryCollector") |
   {"name": .metadata.name, "mode": .spec.mode, "replicas": .spec.replicas,
    "receivers": (.spec.config.receivers | keys),
    "pipelines": (.spec.config.service.pipelines | keys)}' \
+  /tmp/opentelemetry-rendered.yaml
+
+# Show the F5 environment-variable-to-Secret references, but not Secret values.
+yq 'select(.kind == "OpenTelemetryCollector" and .spec.mode == "deployment") |
+  .spec.env[] | select(.name | test("^F5_SNMP_")) |
+  {"env": .name, "secret": .valueFrom.secretKeyRef.name,
+   "key": .valueFrom.secretKeyRef.key}' \
+  /tmp/opentelemetry-rendered.yaml
+
+# Show the identity attributes applied by each F5 resource processor.
+yq 'select(.kind == "OpenTelemetryCollector" and .spec.mode == "deployment") |
+  .spec.config.processors |
+  with_entries(select(.key | test("^resource/f5-")))' \
   /tmp/opentelemetry-rendered.yaml
 ```
 
