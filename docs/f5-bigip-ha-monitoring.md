@@ -38,11 +38,11 @@ design:
 
 | Setting | Member 1 | Member 2 |
 |---------|----------|----------|
-| Receiver ID | `snmp/f5-<f5-member-1>` | `snmp/f5-<f5-member-2>` |
+| Receiver ID | `snmp/f5-<device-name-1>` | `snmp/f5-<device-name-2>` |
 | Endpoint | `udp://<f5-management-endpoint-1>:161` | `udp://<f5-management-endpoint-2>:161` |
-| `device` | `<f5-member-1>` | `<f5-member-2>` |
+| `device` | `<device-name-1>` | `<device-name-2>` |
 | `environment` | `<environment>` | `<environment>` |
-| `ha_pair` | `<ha-pair>` | `<ha-pair>` |
+| `ha_pair` | `<ha-pair-name>` | `<ha-pair-name>` |
 
 Receiver IDs and `device` values must be meaningful, stable names rather than
 management addresses. The shared receiver selector is
@@ -54,13 +54,81 @@ add receiver, processor, and pipeline mappings without copying the base
 Collector configuration. Any overridden lists, including environment-variable
 or pipeline processor/exporter lists, must retain the required base entries.
 
+## Per-environment override layout
+
+Start from
+[`../helm-configs/opentelemetry-kube-stack/f5-bigip-snmp.yaml.example`](../helm-configs/opentelemetry-kube-stack/f5-bigip-snmp.yaml.example).
+Copy it into the environment repository at:
+
+```text
+helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml
+```
+
+Replace every angle-bracketed placeholder with that environment's two device
+names, management endpoints, environment name, and HA-pair name. Keep the
+`snmp/f5-` prefix on receiver IDs: the telemetry-unavailable rules use that
+prefix to select the two receivers. The copied file contains most of the F5
+configuration because Helm can merge its receiver, processor, and pipeline
+mappings with the mappings in the Genestack base values.
+
+The credentials are the exception. Add the following three entries to the
+existing `collectors.deployment.env` list in the environment's main service
+override:
+
+```text
+helm-configs/observability/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml
+```
+
+```yaml
+collectors:
+  deployment:
+    env:
+      # Retain every existing entry in this list, then add these entries.
+      - name: F5_SNMP_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: <f5-snmp-secret-name>
+            key: username
+      - name: F5_SNMP_AUTH_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: <f5-snmp-secret-name>
+            key: auth-password
+      - name: F5_SNMP_PRIVACY_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: <f5-snmp-secret-name>
+            key: privacy-password
+```
+
+Do not put those three entries in a small standalone values file unless that
+file also contains every other required deployment environment variable. Helm
+replaces the entire `env` list with the last supplied list instead of appending
+items. Omitting the existing entries can therefore remove credentials used by
+other Collector receivers. In contrast, the dedicated F5 file adds uniquely
+named mappings and does not have to repeat unrelated Collector configuration.
+
+The standard OpenTelemetry installer loads every `*.yaml` file in the base,
+global, and environment service-override directories. Consequently, the copied
+`f5-bigip-snmp.yaml` is included automatically during deployment. The source
+template ends in `.yaml.example`, so the installer does not deploy it from the
+base directory.
+
+Before deploying, the environment should therefore contain both files:
+
+```text
+helm-configs/observability/opentelemetry-kube-stack/
+|-- f5-bigip-snmp.yaml
+`-- opentelemetry-kube-stack-helm-overrides.yaml
+```
+
 ## Receiver and security contract
 
 Each receiver uses the OpenTelemetry Collector Contrib SNMP receiver with this
 shape; placeholders are resolved by the environment override:
 
 ```yaml
-snmp/f5-<f5-member-1>:
+snmp/f5-<device-name-1>:
   endpoint: udp://<f5-management-endpoint-1>:161
   collection_interval: 60s
   timeout: 5s
@@ -76,7 +144,7 @@ snmp/f5-<f5-member-1>:
       description: >-
         F5 BIG-IP failover state (0 unknown, 1 offline, 2 forced offline,
         3 standby, 4 active).
-      unit: "1"
+      unit: "{state}"
       gauge:
         value_type: int
       scalar_oids:
@@ -103,7 +171,7 @@ endpoints, device names, or HA-pair identity in the Secret. Create it safely
 from protected files, without placing values in shell history:
 
 ```shell
-kubectl -n monitoring create secret generic <secret-name> \
+kubectl -n monitoring create secret generic <f5-snmp-secret-name> \
   --from-file=username=/secure/path/username \
   --from-file=auth-password=/secure/path/auth-password \
   --from-file=privacy-password=/secure/path/privacy-password \
@@ -256,6 +324,7 @@ helm template opentelemetry-kube-stack \
   --values <genestack-observability>/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
   --values <environment-overrides>/helm-configs/global_overrides/endpoints.yaml \
   --values <environment-overrides>/helm-configs/global_overrides/logger.yaml \
+  --values <environment-overrides>/helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml \
   --values <environment-overrides>/helm-configs/observability/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
   > /tmp/opentelemetry-rendered.yaml
 
