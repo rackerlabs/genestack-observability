@@ -255,16 +255,38 @@ would be an expected-target metric generated from deployment inventory.
 
 ## Alert policy
 
-| Condition | Warning | Critical | Evidence |
-|-----------|---------|----------|----------|
-| Per-target SNMP telemetry unavailable | 2 minutes | 5 minutes | Named receiver counter does not increase |
-| Member reports state 0, 1, or 2 | 2 minutes | 5 minutes | `f5_bigip_failover_state` |
-| Pair has no active member | 2 minutes | 5 minutes | No observed member equals `4` |
-| Pair has no standby member | 5 minutes | 15 minutes | No observed member equals `3` |
+The rule set contains eight alerts. Each condition has a warning followed by a
+critical alert if the problem lasts longer:
+
+| Alert | When it fires |
+|-------|---------------|
+| `f5-bigip-snmp-telemetry-unavailable-warning` | An observed F5 SNMP receiver has produced no successful metric points during the last 2 minutes. |
+| `f5-bigip-snmp-telemetry-unavailable-critical` | An observed F5 SNMP receiver has produced no successful metric points during the last 5 minutes. |
+| `f5-bigip-unhealthy-state-warning` | An individual F5 has continuously reported an unhealthy failover state (0 unknown, 1 offline, or 2 forced offline) for 2 minutes. |
+| `f5-bigip-unhealthy-state-critical` | An individual F5 has continuously reported one of those unhealthy failover states for 5 minutes. |
+| `f5-bigip-ha-pair-no-active-warning` | No observed member of an HA pair has reported active state 4 for 2 minutes. This likely indicates a service outage. |
+| `f5-bigip-ha-pair-no-active-critical` | No observed member of an HA pair has reported active state 4 for 5 minutes. |
+| `f5-bigip-ha-pair-no-standby-warning` | No observed member of an HA pair has reported standby state 3 for 5 minutes. The pair may still be serving traffic, but it has lost redundancy. |
+| `f5-bigip-ha-pair-no-standby-critical` | No observed member of an HA pair has reported standby state 3 for 15 minutes. |
+
+The telemetry alerts operate independently for every receiver whose ID matches
+`snmp/f5-.+`. The offset guard requires its counter series to have existed at
+the beginning of the 2- or 5-minute lookback window, preventing an immediate
+alert when the Collector starts. If the counter series disappears entirely,
+these expressions cannot identify the receiver and do not fire; the
+platform-owned Collector-availability alert must cover that case.
 
 Pair rules group by `environment` and `ha_pair`; no endpoint appears in their
 PromQL. Pair-level loss of redundancy is intentionally not suppressed by a
-member-level state alert. In particular, standby is value 3, not value 4.
+member-level state alert. They require at least one observed
+`f5_bigip_failover_state` series for the pair, so they do not infer that a pair
+has no active or standby member when all of its state series are absent. In
+particular, standby is value 3, not value 4.
+
+Prometheus can have both warning and critical variants firing after the
+critical threshold is reached. Suppressing the warning at that point, if
+desired, is an Alertmanager inhibition-policy concern rather than part of these
+rules.
 
 ## Rule ownership, deployment, and tests
 
