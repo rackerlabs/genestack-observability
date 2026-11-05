@@ -269,6 +269,16 @@ critical alert if the problem lasts longer:
 | `f5-bigip-ha-pair-no-standby-warning` | No observed member of an HA pair has reported standby state 3 for 5 minutes. The pair may still be serving traffic, but it has lost redundancy. |
 | `f5-bigip-ha-pair-no-standby-critical` | No observed member of an HA pair has reported standby state 3 for 15 minutes. |
 
+These durations describe when a rule becomes eligible to fire, not an exact
+wall-clock delivery guarantee. Prometheus fires a qualifying alert at the first
+rule evaluation after its threshold is reached, so scrape and rule-evaluation
+alignment can add a small delay; Alertmanager processing and notification
+delivery can add further delay.
+
+"No active member" means that no observed metric for the pair reports active
+state 4. It strongly suggests a service outage, but the rule does not inspect
+traffic and therefore cannot by itself prove that traffic has stopped.
+
 The telemetry alerts operate independently for every receiver whose ID matches
 `snmp/f5-.+`. The offset guard requires its counter series to have existed at
 the beginning of the 2- or 5-minute lookback window, preventing an immediate
