@@ -57,7 +57,7 @@ or pipeline processor/exporter lists, must retain the required base entries.
 ## Per-environment override layout
 
 Start from
-[`../helm-configs/opentelemetry-kube-stack/f5-bigip-snmp.yaml.example`](../helm-configs/opentelemetry-kube-stack/f5-bigip-snmp.yaml.example).
+[`../helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-f5-bigip-snmp-overrides.yaml.example`](../helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-f5-bigip-snmp-overrides.yaml.example).
 Copy it into the environment repository at:
 
 ```text
