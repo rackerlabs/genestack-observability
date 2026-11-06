@@ -48,6 +48,9 @@ Prometheus alerting and recording rules are deployed as native `PrometheusRule` 
 
 They are managed separately from the `kube-prometheus-stack` Helm release.
 
+The F5 BIG-IP HA rule set and its Collector metric contract are documented in
+[F5 BIG-IP HA monitoring](f5-bigip-ha-monitoring.md).
+
 This removes the previous workflow:
 
 ```text

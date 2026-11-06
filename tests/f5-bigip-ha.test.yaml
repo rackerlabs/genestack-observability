@@ -1,0 +1,323 @@
+rule_files: []
+evaluation_interval: 30s
+
+tests:
+  - name: active and standby members are healthy
+    interval: 30s
+    input_series:
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb1"}'
+        values: '4x40'
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb2"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: f5-bigip-unhealthy-state-warning
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-unhealthy-state-critical
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-active-warning
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-active-critical
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-standby-warning
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-standby-critical
+        exp_alerts: []
+
+  - name: two active members have no standby
+    interval: 30s
+    input_series:
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb1"}'
+        values: '4x40'
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb2"}'
+        values: '4x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-active-warning
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-active-critical
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-standby-warning
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-pair/test-environment/pair-a/standby
+              correlation_scope: f5-pair
+            exp_annotations:
+              description: No observed member of F5 pair pair-a in environment test-environment has reported standby state 3 for 5 minutes.
+              runbook_url: default_runbook_url
+              summary: F5 HA pair pair-a has no standby member.
+              dashboard_url: default_dashboard_url
+      - eval_time: 16m
+        alertname: f5-bigip-ha-pair-no-standby-critical
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-pair/test-environment/pair-a/standby
+              correlation_scope: f5-pair
+            exp_annotations:
+              description: No observed member of F5 pair pair-a in environment test-environment has reported standby state 3 for 15 minutes.
+              runbook_url: default_runbook_url
+              summary: F5 HA pair pair-a has no standby member.
+              dashboard_url: default_dashboard_url
+
+  - name: two standby members have no active
+    interval: 30s
+    input_series:
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb1"}'
+        values: '3x20'
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="lb2"}'
+        values: '3x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: f5-bigip-ha-pair-no-standby-warning
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: f5-bigip-ha-pair-no-standby-critical
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: f5-bigip-ha-pair-no-active-warning
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-pair/test-environment/pair-a/active
+              correlation_scope: f5-pair
+            exp_annotations:
+              description: No observed member of F5 pair pair-a in environment test-environment has reported active state 4 for 2 minutes.
+              runbook_url: default_runbook_url
+              summary: F5 HA pair pair-a has no active member.
+              dashboard_url: default_dashboard_url
+      - eval_time: 6m
+        alertname: f5-bigip-ha-pair-no-active-critical
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-pair/test-environment/pair-a/active
+              correlation_scope: f5-pair
+            exp_annotations:
+              description: No observed member of F5 pair pair-a in environment test-environment has reported active state 4 for 5 minutes.
+              runbook_url: default_runbook_url
+              summary: F5 HA pair pair-a has no active member.
+              dashboard_url: default_dashboard_url
+
+  - name: unhealthy member states zero one and two
+    interval: 30s
+    input_series:
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="unknown-member"}'
+        values: '0x20'
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="offline-member"}'
+        values: '1x20'
+      - series: 'f5_bigip_failover_state{environment="test-environment",ha_pair="pair-a",device="forced-offline-member"}'
+        values: '2x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: f5-bigip-unhealthy-state-warning
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: unknown-member
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/unknown-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 unknown-member in pair pair-a (environment test-environment) reports failover state 0; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 unknown-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: offline-member
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/offline-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 offline-member in pair pair-a (environment test-environment) reports failover state 1; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 offline-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: forced-offline-member
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/forced-offline-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 forced-offline-member in pair pair-a (environment test-environment) reports failover state 2; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 forced-offline-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+      - eval_time: 6m
+        alertname: f5-bigip-unhealthy-state-critical
+        exp_alerts:
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: unknown-member
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/unknown-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 unknown-member in pair pair-a (environment test-environment) reports failover state 0; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 unknown-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: offline-member
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/offline-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 offline-member in pair pair-a (environment test-environment) reports failover state 1; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 offline-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              environment: test-environment
+              ha_pair: pair-a
+              device: forced-offline-member
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-member/test-environment/pair-a/forced-offline-member
+              correlation_scope: f5-member
+            exp_annotations:
+              description: F5 forced-offline-member in pair pair-a (environment test-environment) reports failover state 2; 0=unknown, 1=offline, 2=forced offline, 3=standby, 4=active.
+              runbook_url: default_runbook_url
+              summary: F5 forced-offline-member reports an unhealthy failover state.
+              dashboard_url: default_dashboard_url
+
+  - name: one receiver stops producing successful poll points
+    interval: 30s
+    input_series:
+      - series: 'otelcol_scraper_scraped_metric_points_total{cluster="test-environment",namespace="monitoring",job="serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0",receiver="snmp/f5-test-member-1",scraper="snmp"}'
+        values: '0+1x22'
+      - series: 'otelcol_scraper_scraped_metric_points_total{cluster="test-environment",namespace="monitoring",job="serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0",receiver="snmp/f5-test-member-2",scraper="snmp"}'
+        values: '0 1 2 3 4 5 6 6x16'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: f5-bigip-snmp-telemetry-unavailable-warning
+        exp_alerts:
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-2
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-2
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-2 has produced no SNMP metric points for 2 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-2.
+              dashboard_url: default_dashboard_url
+      - eval_time: 9m
+        alertname: f5-bigip-snmp-telemetry-unavailable-critical
+        exp_alerts:
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-2
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-2
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-2 has produced no SNMP metric points for 5 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-2.
+              dashboard_url: default_dashboard_url
+
+  - name: no state metrics and neither receiver has ever succeeded
+    interval: 30s
+    input_series:
+      - series: 'otelcol_scraper_scraped_metric_points_total{cluster="test-environment",namespace="monitoring",job="serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0",receiver="snmp/f5-test-member-1",scraper="snmp"}'
+        values: '0x20'
+      - series: 'otelcol_scraper_scraped_metric_points_total{cluster="test-environment",namespace="monitoring",job="serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0",receiver="snmp/f5-test-member-2",scraper="snmp"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: f5-bigip-snmp-telemetry-unavailable-warning
+        exp_alerts:
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-1
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-1
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-1 has produced no SNMP metric points for 2 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-1.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-2
+              severity: warning
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-2
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-2 has produced no SNMP metric points for 2 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-2.
+              dashboard_url: default_dashboard_url
+      - eval_time: 6m
+        alertname: f5-bigip-snmp-telemetry-unavailable-critical
+        exp_alerts:
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-1
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-1
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-1 has produced no SNMP metric points for 5 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-1.
+              dashboard_url: default_dashboard_url
+          - exp_labels:
+              namespace: monitoring
+              job: serviceMonitor/monitoring/opentelemetry-kube-stack-deployment-collector-monitoring/0
+              receiver: snmp/f5-test-member-2
+              severity: critical
+              group_name: f5-bigip-ha
+              correlation_key: f5-snmp/snmp/f5-test-member-2
+              correlation_scope: f5-snmp
+            exp_annotations:
+              description: Receiver snmp/f5-test-member-2 has produced no SNMP metric points for 5 minutes. This can indicate network, authentication, device, or Collector receiver failure.
+              runbook_url: default_runbook_url
+              summary: F5 SNMP telemetry is unavailable for snmp/f5-test-member-2.
+              dashboard_url: default_dashboard_url

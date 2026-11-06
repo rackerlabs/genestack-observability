@@ -39,8 +39,8 @@ jobs:
             --version ${{ steps.chart-version.outputs.version }} \
             --create-namespace \
             --namespace=monitoring \
-            -f ${{ github.workspace }}/base-helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
-            --post-renderer ${{ github.workspace }}/base-kustomize/kustomize.sh \
+            -f ${{ github.workspace }}/helm-configs/opentelemetry-kube-stack/opentelemetry-kube-stack-helm-overrides.yaml \
+            --post-renderer ${{ github.workspace }}/kustomize/kustomize.sh \
             --post-renderer-args opentelemetry-kube-stack/${{ matrix.overlays }} > /tmp/rendered.yaml
       - name: Return helm Build
         uses: actions/upload-artifact@v4

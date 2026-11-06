@@ -1,0 +1,102 @@
+---
+# Copy this file to the environment repository as:
+# helm-configs/observability/opentelemetry-kube-stack/f5-bigip-snmp.yaml
+#
+# Replace every angle-bracketed placeholder. The three Secret-backed
+# environment variables used below belong in the environment's complete
+# opentelemetry-kube-stack-helm-overrides.yaml env list; see
+# docs/f5-bigip-ha-monitoring.md.
+collectors:
+  deployment:
+    config:
+      receivers:
+        snmp/f5-<device-name-1>:
+          collection_interval: 60s
+          timeout: 5s
+          endpoint: udp://<f5-management-endpoint-1>:161
+          version: v3
+          security_level: auth_priv
+          user: ${env:F5_SNMP_USERNAME}
+          auth_type: SHA256
+          auth_password: ${env:F5_SNMP_AUTH_PASSWORD}
+          privacy_type: AES256
+          privacy_password: ${env:F5_SNMP_PRIVACY_PASSWORD}
+          metrics:
+            f5.bigip.failover.state:
+              description: F5 BIG-IP failover state (0 unknown, 1 offline, 2 forced offline, 3 standby, 4 active).
+              unit: "{state}"
+              gauge:
+                value_type: int
+              scalar_oids:
+                - oid: 1.3.6.1.4.1.3375.2.1.14.3.1.0
+
+        snmp/f5-<device-name-2>:
+          collection_interval: 60s
+          timeout: 5s
+          endpoint: udp://<f5-management-endpoint-2>:161
+          version: v3
+          security_level: auth_priv
+          user: ${env:F5_SNMP_USERNAME}
+          auth_type: SHA256
+          auth_password: ${env:F5_SNMP_AUTH_PASSWORD}
+          privacy_type: AES256
+          privacy_password: ${env:F5_SNMP_PRIVACY_PASSWORD}
+          metrics:
+            f5.bigip.failover.state:
+              description: F5 BIG-IP failover state (0 unknown, 1 offline, 2 forced offline, 3 standby, 4 active).
+              unit: "{state}"
+              gauge:
+                value_type: int
+              scalar_oids:
+                - oid: 1.3.6.1.4.1.3375.2.1.14.3.1.0
+
+      processors:
+        resource/f5-<device-name-1>:
+          attributes:
+            - key: environment
+              value: <environment>
+              action: upsert
+            - key: ha_pair
+              value: <ha-pair-name>
+              action: upsert
+            - key: device
+              value: <device-name-1>
+              action: upsert
+
+        resource/f5-<device-name-2>:
+          attributes:
+            - key: environment
+              value: <environment>
+              action: upsert
+            - key: ha_pair
+              value: <ha-pair-name>
+              action: upsert
+            - key: device
+              value: <device-name-2>
+              action: upsert
+
+      service:
+        pipelines:
+          # Separate pipelines attach each member's stable identity without
+          # leaking one target's resource attributes onto the other target.
+          metrics/f5-<device-name-1>:
+            receivers:
+              - snmp/f5-<device-name-1>
+            processors:
+              - resource/f5-<device-name-1>
+              - memory_limiter
+              - batch
+            exporters:
+              - prometheusremotewrite
+              - debug
+
+          metrics/f5-<device-name-2>:
+            receivers:
+              - snmp/f5-<device-name-2>
+            processors:
+              - resource/f5-<device-name-2>
+              - memory_limiter
+              - batch
+            exporters:
+              - prometheusremotewrite
+              - debug
