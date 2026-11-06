@@ -2,7 +2,7 @@
 
 This document is the source of truth for the reusable F5 BIG-IP HA monitoring
 and alerting design. Environment specific Collector configuration remains in
-each environment's specific overrides. The reusable Prometheus rules live in
+each environment's specific overrides. The reusable Prometheus rules live
 here in the genestack-observability repository and are deployed by the Genestack
 Prometheus rules chart.
 
@@ -30,8 +30,9 @@ between streams.
 
 The implementation uses the Collector chart's existing arbitrary receiver,
 processor, pipeline, environment-variable, and Secret extension points. No
-F5-specific base Genestack change, site-specific overrides notwithstanding, or
-separate SNMP exporter is required.
+F5-specific modification to the base Collector configuration or separate SNMP
+exporter is required; each site adds its F5 configuration through environment
+overrides.
 
 ## Environment contract
 
@@ -109,13 +110,13 @@ file also contains every other required deployment environment variable. Helm
 replaces the entire `env` list with the last supplied list instead of appending
 items. Omitting the existing entries can therefore remove credentials used by
 other Collector receivers. Most of the environment specific configuration can
-reside in a dedicated file because it doesn't have to replace any lists, only
-adding uniquely named mappings doesn't need to repeat unrelated Collector
+reside in a dedicated file because it doesn't have to replace any lists; it only
+adds uniquely named mappings and doesn't need to repeat unrelated Collector
 configuration.
 
 The standard OpenTelemetry installer loads every `*.yaml` file in the base,
 global, and environment service-override directories. So, the copied
-`f5-bigip-snmp.yaml` is gets included automatically during deployment. The
+`f5-bigip-snmp.yaml` is included automatically during deployment. The
 source template ends in `.yaml.example`, so the installer does not deploy it
 from the base directory.
 
@@ -197,10 +198,11 @@ Keep the initial scope to this one scalar, the explicit interval and timeout,
 one logical poller, and the pinned chart. Before any chart or Collector upgrade,
 render the configuration, confirm the image still contains `snmp`, validate
 the receiver enums and schema, and rerun the Prometheus rule tests. Rollback is
-the ordinary environment-values rollback: remove the two receiver pipelines
-and their three Secret environment references, then restore the last validated
-release. The reusable rules may remain loaded because they select only named
-F5 receivers and F5 state series.
+the ordinary environment-values rollback: remove the F5 override file, which
+removes its receivers, resource processors, and pipelines; remove the three
+Secret-backed environment-variable entries; then restore the last validated
+release. The reusable rules may remain loaded because they select only named F5
+receivers and F5 state series.
 
 ## Metric and label contract
 
@@ -399,30 +401,62 @@ references, and the `environment`, `ha_pair`, and `device` resource attributes.
 
 ## Live validation and troubleshooting
 
-These commands require a deployed non-production environment. Replace the
-placeholders with the release and member names obtained from the environment
-override. They inspect references and metadata, never Secret values.
+These commands require a deployed non-production environment. They inspect
+references and metadata, never Secret values.
 
 ```shell
-# Inspect the live Collector CRs and confirm one Deployment replica.
-kubectl -n monitoring get opentelemetrycollector -o yaml
-kubectl -n monitoring get deployment -l app.kubernetes.io/name=opentelemetry-collector
+# Show each OpenTelemetryCollector custom resource's name, mode, and requested
+# replica count. Confirm that the Deployment-mode Collector requests one replica.
+kubectl -n monitoring get opentelemetrycollector -o yaml | \
+  yq '.items[] | {"name": .metadata.name, "mode": .spec.mode,
+    "replicas": .spec.replicas}'
 
-# Inspect receiver IDs, pipelines, image, and Secret key references.
-kubectl -n monitoring get opentelemetrycollector <deployment-collector> \
-  -o jsonpath='{.spec.image}{"\n"}{.spec.config.receivers}{"\n"}{.spec.env}{"\n"}'
+# Confirm that the resulting Deployment has one ready and available replica,
+# and show the resolved Collector image.
+kubectl -n monitoring get deployment \
+  -l app.kubernetes.io/name=opentelemetry-kube-stack-deployment-collector \
+  -o yaml | yq '.items[] | {
+    "name": .metadata.name,
+    "desired": .spec.replicas,
+    "ready": .status.readyReplicas,
+    "available": .status.availableReplicas,
+    "image": .spec.template.spec.containers[0].image
+  }'
+
+# Show only the F5 receiver and pipeline IDs and F5 Secret key references.
+# This does not read or display Secret values.
+kubectl -n monitoring get opentelemetrycollector opentelemetry-kube-stack-deployment \
+  -o yaml | yq '{
+    "f5_receivers": (.spec.config.receivers | keys |
+      map(select(test("^snmp/f5-")))),
+    "f5_pipelines": (.spec.config.service.pipelines | keys |
+      map(select(test("^metrics/f5-")))),
+    "f5_secret_references": [.spec.env[] |
+      select(.name | test("^F5_SNMP_")) |
+      {"env": .name, "secret": .valueFrom.secretKeyRef.name,
+       "key": .valueFrom.secretKeyRef.key}]
+  }'
 
 # Confirm the running binary advertises the SNMP component. The Collector image
 # may not contain a shell; use the binary directly, adjusting its path if needed.
-kubectl -n monitoring exec deploy/<deployment-collector> -- \
-  /otelcol-contrib components | grep -w snmp
+kubectl -n monitoring exec deploy/opentelemetry-kube-stack-deployment-collector \
+  -- /otelcol-contrib components | grep -w snmp
 
 # Review startup, authentication, timeout, and receiver errors.
-kubectl -n monitoring logs deploy/<deployment-collector> --since=30m | \
+kubectl -n monitoring logs \
+  deploy/opentelemetry-kube-stack-deployment-collector --since=30m | \
   grep -Ei 'snmp|f5|error|timeout|authentication'
+
+# Get the F5 management endpoints from the live Collector configuration.
+kubectl -n monitoring get opentelemetrycollector \
+  opentelemetry-kube-stack-deployment -o yaml | \
+  yq '.spec.config.receivers | to_entries | .[] |
+    select(.key | test("^snmp/f5-")) |
+    {"receiver": .key, "endpoint": .value.endpoint}'
 
 # Test UDP/161 from the same namespace/network context with a disposable tools
 # pod; the Collector image itself is intentionally minimal.
+# This might take a moment if the container image needs downloading
 kubectl -n monitoring run snmp-network-check --rm -it --restart=Never \
   --image=nicolaka/netshoot -- \
   nc -zvu -w5 <f5-management-endpoint-1> 161
@@ -448,7 +482,12 @@ ALERTS{alertname=~"f5-bigip-.+",alertstate=~"pending|firing"}
 The first query must display both `device` values and their shared `ha_pair`;
 normal HA operation is one value 4 and one value 3. In Prometheus **Status →
 Rules**, verify the `f5-bigip-ha` group is loaded. The counter query should
-increase once per successful 60-second poll for each named receiver.
+increase once per successful 60-second poll for each named receiver. The
+`ALERTS` query shows only F5 alerts that are currently pending or firing, so an
+empty result is expected in a healthy environment. It does not verify that the
+rules are loaded; use **Status → Rules** for that check. You can also open the
+**Alerts** section of the Prometheus UI and search for `f5-` to see all eight F5
+alert rules, including rules that are currently inactive.
 
 For a safe fault test, change one non-production receiver endpoint in the
 source-controlled environment override to an unroutable TEST-NET address such
