@@ -7,3 +7,4 @@ charts:
   opentelemetry-kube-stack: 0.13.1
   prometheus-pushgateway: 3.4.2
   tempo: 1.24.4
+  openstack-metrics-exporter: 0.4.4

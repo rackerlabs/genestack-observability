@@ -7,6 +7,7 @@ components:
   prometheus-pushgateway: true
   barbican-exporter: true
   openstack-exporter: true
+  openstack-metrics-exporter: true
   tempo: false
   loki: true
   opentelemetry-kube-stack: true
@@ -21,6 +22,7 @@ install_order:
   - kube-prometheus-stack
   - prometheus-pushgateway
   - barbican-exporter
+  - openstack-metrics-exporter
   - openstack-exporter
   - loki
   - opentelemetry-kube-stack
