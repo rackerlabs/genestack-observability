@@ -1,0 +1,27 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-no-reserved-hosts:
+    groups:
+    - name: openstack-masakari-no-reserved-hosts
+      rules:
+      - alert: openstack-masakari-no-reserved-hosts-critical
+        expr: |
+          openstack_masakari_reserved_hosts_available{job="os-metrics-prometheus-openstack-exporter"} == 0
+          and on (segment_uuid)
+          label_replace(
+            openstack_masakari_segment{job="os-metrics-prometheus-openstack-exporter", recovery_method=~"reserved_host|rh_priority|auto_priority"},
+            "segment_uuid", "$1", "uuid", "(.*)"
+          )
+        for: 20m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-no-reserved-hosts
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_segment_readiness
+        annotations:
+          description: >-
+            Segment {{ $labels.segment_uuid }} needs a reserved host but has none off
+            maintenance, so the next host failure here cannot be recovered. Usually caused by an
+            earlier failover that was never cleaned up. Fix now, not during an outage.
+          runbook_url: default_runbook_url
+          summary: Failover segment {{ $labels.segment_uuid }} has no reserved host available
+          dashboard_url: default_dashboard_url

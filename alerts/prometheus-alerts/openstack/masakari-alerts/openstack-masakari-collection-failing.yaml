@@ -1,0 +1,38 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-collection-failing:
+    groups:
+    - name: openstack-masakari-collection-failing
+      rules:
+      - alert: openstack-masakari-collection-failing-warning
+        expr: openstack_masakari_collection_success{job="os-metrics-prometheus-openstack-exporter"} == 0
+        for: 12m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-collection-failing
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_service_health
+        annotations:
+          description: >-
+            The {{ $labels.collector }} collector is failing while others succeed, so
+            openstack_masakari_up stays at 1 and the stale metrics still look current. inventory
+            hides segment and reserved host state; notifications hides host failures. Check the
+            exporter logs and whether Masakari is slower than masakari-scrape-timeout.
+          runbook_url: default_runbook_url
+          summary: Masakari {{ $labels.collector }} collector is failing
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-collection-failing-critical
+        expr: openstack_masakari_collection_success{job="os-metrics-prometheus-openstack-exporter", collector=~"notifications|vmoves"} == 0
+        for: 30m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-collection-failing
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_service_health
+        annotations:
+          description: >-
+            The {{ $labels.collector }} collector has failed for 30m, so host failure and
+            evacuation alerts cannot fire. This is loss of Instance HA visibility, not an
+            exporter nuisance.
+          runbook_url: default_runbook_url
+          summary: Masakari recovery data has not been collected for 30 minutes
+          dashboard_url: default_dashboard_url

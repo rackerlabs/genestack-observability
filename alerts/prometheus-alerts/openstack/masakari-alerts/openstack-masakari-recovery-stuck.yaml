@@ -1,0 +1,53 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-recovery-stuck:
+    groups:
+    - name: openstack-masakari-recovery-stuck
+      rules:
+      - alert: openstack-masakari-recovery-stuck-warning
+        expr: openstack_masakari_notification_oldest_pending_age_seconds{job="os-metrics-prometheus-openstack-exporter", type="COMPUTE_HOST"} > 900
+        for: 8m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-recovery-stuck
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            A COMPUTE_HOST notification has been unfinished for over 15m. Usually a large
+            instance count on the failed host, or a workflow blocked on Nova scheduling. Check
+            masakari-engine for instances stuck migrating.
+          runbook_url: default_runbook_url
+          summary: Masakari host recovery has been running for over 15 minutes
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-recovery-stuck-critical
+        expr: openstack_masakari_notification_oldest_pending_age_seconds{job="os-metrics-prometheus-openstack-exporter", type="COMPUTE_HOST"} > 2700
+        for: 8m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-recovery-stuck
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            A COMPUTE_HOST notification has been unfinished for over 45m, so the recovery is
+            stuck rather than slow. Instances from the failed host will not recover on their
+            own. Inspect the masakari-engine taskflow state and evacuate manually.
+          runbook_url: default_runbook_url
+          summary: Masakari host recovery is stuck after 45 minutes
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-instance-recovery-stuck-warning
+        expr: openstack_masakari_notification_oldest_pending_age_seconds{job="os-metrics-prometheus-openstack-exporter", type=~"VM|PROCESS"} > 1800
+        for: 8m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-recovery-stuck
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            A {{ $labels.type }} notification has been open for over 30m. These are short
+            operations, so this points at a wedged masakari-engine workflow. The instances it
+            covers are still unhealthy.
+          runbook_url: default_runbook_url
+          summary: Masakari {{ $labels.type }} recovery has been pending for over 30 minutes
+          dashboard_url: default_dashboard_url

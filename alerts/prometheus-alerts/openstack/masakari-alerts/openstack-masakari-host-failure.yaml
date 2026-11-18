@@ -1,0 +1,69 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-host-failure:
+    groups:
+    - name: openstack-masakari-host-failure
+      rules:
+      - alert: openstack-masakari-host-failure-critical
+        expr: openstack_masakari_notification{job="os-metrics-prometheus-openstack-exporter", type="COMPUTE_HOST", status=~"new|running"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-host-failure
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            Compute host {{ $labels.source_host_uuid }} is down and Masakari is evacuating its
+            instances. Watch openstack-masakari-vmove-failed-critical to confirm they came back.
+          runbook_url: default_runbook_url
+          summary: Compute host {{ $labels.source_host_uuid }} failed and Masakari recovery is in progress
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-host-recovery-failed-critical
+        expr: openstack_masakari_notification{job="os-metrics-prometheus-openstack-exporter", type="COMPUTE_HOST", status=~"error|failed"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-host-failure
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            Recovery of host {{ $labels.source_host_uuid }} ended in {{ $labels.status }}.
+            Instances need manual evacuation. Check masakari-engine logs for notification
+            {{ $labels.notification_uuid }}. Silence this once handled; it fires until the
+            notification ages out of the exporter lookback window.
+          runbook_url: default_runbook_url
+          summary: Masakari recovery FAILED for compute host {{ $labels.source_host_uuid }}
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-host-recovery-ignored-warning
+        expr: openstack_masakari_notification{job="os-metrics-prometheus-openstack-exporter", type="COMPUTE_HOST", status="ignored"} == 1
+        for: 0m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-host-failure
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            Host {{ $labels.source_host_uuid }} failed and Masakari took no action, so nothing
+            is recovering its instances. Usually the host is on maintenance or outside an
+            enabled segment. Confirm this was intended.
+          runbook_url: default_runbook_url
+          summary: Masakari ignored the failure of compute host {{ $labels.source_host_uuid }}
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-process-failure-warning
+        expr: openstack_masakari_notifications{job="os-metrics-prometheus-openstack-exporter", type="PROCESS", status=~"new|running"} > 0
+        for: 12m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-host-failure
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_host_recovery
+        annotations:
+          description: >-
+            {{ $value }} PROCESS notifications open for 12m: nova-compute or libvirtd died on a
+            monitored host and Masakari is restarting it. Repeated process failures often
+            precede a full host failure.
+          runbook_url: default_runbook_url
+          summary: Masakari is recovering failed compute processes
+          dashboard_url: default_dashboard_url
