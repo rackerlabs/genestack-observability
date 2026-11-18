@@ -1,0 +1,62 @@
+additionalPrometheusRulesMap:
+  openstack-designate-resource-alerts:
+    groups:
+    - name: openstack-designate-resource-alerts
+      rules:
+      - alert: ZoneInError
+        expr: openstack_designate_zone_status{status=~"ERROR"}
+        labels:
+          severity: critical
+          group_name: openstack-designate-resource-alerts
+        annotations:
+          description: |
+            The dns zone `{{ $labels.id }}` is in ERROR state.
+          runbook_url: default_runbook_url
+          summary: "Designate zone is in ERROR state"
+          dashboard_url: default_dashboard_url
+      - alert: RecordInError
+        expr: openstack_designate_recordsets_status{status=~"ERROR"}
+        labels:
+          severity: warning
+          group_name: openstack-designate-resource-alerts
+        annotations:
+          description: |
+            The recordset `{{ $labels.id }}` in zone `{{ $labels.zone_id }}` is in ERROR state.
+          runbook_url: default_runbook_url
+          summary: "Designate recordset is in ERROR state"
+          dashboard_url: default_dashboard_url
+      - alert: DesignateDown
+        expr: openstack_designate_up != 1
+        labels:
+          severity: critical
+          group_name: openstack-designate-resource-alerts
+        annotations:
+          description: |
+            Designate service is down; please check the designate service logs to determine the cause of the issue.
+          runbook_url: default_runbook_url
+          summary: "Designate Service is down"
+          dashboard_url: default_dashboard_url
+      - alert: ZoneInPending
+        expr: openstack_designate_zone_status{status=~"PENDING"}
+        for: 5m
+        labels:
+          severity: warning
+          group_name: openstack-designate-resource-alerts
+        annotations:
+          description: |
+            The dns zone `{{ $labels.id }}` has been in PENDING state for over 5 mins.
+          runbook_url: default_runbook_url
+          summary: "Designate zone has been in PENDING state for over 5 mins"
+          dashboard_url: default_dashboard_url
+      - alert: RecordInPending
+        expr: openstack_designate_recordsets_status{status=~"PENDING"}
+        for: 5m
+        labels:
+          severity: warning
+          group_name: openstack-designate-resource-alerts
+        annotations:
+          description: |
+            The recordset `{{ $labels.id }}` in zone `{{ $labels.zone_id }}` has been in PENDING state for over 5 mins.
+          runbook_url: default_runbook_url
+          summary: "Designate recordset has been in PENDING state for over 5 mins"
+          dashboard_url: default_dashboard_url
