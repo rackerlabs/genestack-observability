@@ -1,0 +1,23 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-host-on-maintenance:
+    groups:
+    - name: openstack-masakari-host-on-maintenance
+      rules:
+      - alert: openstack-masakari-host-on-maintenance-warning
+        expr: openstack_masakari_host_on_maintenance{job="os-metrics-prometheus-openstack-exporter"} == 1
+        for: 4h
+        labels:
+          severity: warning
+          group_name: openstack-masakari-host-on-maintenance
+          node_hostname: '{{ $labels.hostname }}'
+          correlation_scope: masakari_segment_readiness
+        annotations:
+          description: >-
+            Host {{ $labels.hostname }} in segment {{ $labels.failover_segment_name }} has been
+            on maintenance for 4h, so Masakari ignores its failures and will not use it as a
+            recovery target. Masakari sets this flag after recovering a host and never clears
+            it, which is the usual reason a host silently loses HA protection. Shorten the 4h
+            delay if your maintenance windows are shorter.
+          runbook_url: default_runbook_url
+          summary: Masakari host {{ $labels.hostname }} has been on maintenance for 4 hours
+          dashboard_url: default_dashboard_url

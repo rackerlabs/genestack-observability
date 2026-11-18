@@ -1,0 +1,53 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-api-down:
+    groups:
+    - name: openstack-masakari-api-down
+      rules:
+      - alert: openstack-masakari-api-down-warning
+        expr: openstack_masakari_up{job="os-metrics-prometheus-openstack-exporter"} == 0
+        for: 8m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-api-down
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_service_health
+        annotations:
+          description: >-
+            Every Masakari collector is failing, so Instance HA state is unknown and host
+            failures will not surface in Prometheus. Check the masakari-api pods, the Keystone
+            instance-ha catalog entry, and the exporter credentials.
+          runbook_url: default_runbook_url
+          summary: Masakari API is not responding to the OpenStack exporter
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-api-down-critical
+        expr: openstack_masakari_up{job="os-metrics-prometheus-openstack-exporter"} == 0
+        for: 20m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-api-down
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_service_health
+        annotations:
+          description: >-
+            Masakari has been unreachable for 20m and Instance HA is unmonitored cloud-wide.
+            Verify masakari-api, masakari-engine, and masakari-hostmonitor are running before
+            assuming hosts are still protected.
+          runbook_url: default_runbook_url
+          summary: Masakari API has been unreachable for 20 minutes
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-metrics-absent-warning
+        expr: absent(openstack_masakari_up{job="os-metrics-prometheus-openstack-exporter"})
+        for: 20m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-api-down
+          node_hostname: unknown
+          correlation_scope: masakari_service_health
+        annotations:
+          description: >-
+            No openstack_masakari_up series exists, so no other Masakari alert can fire. Either
+            the instance-ha collector is not enabled, microversion negotiation failed at exporter
+            startup, or the ServiceMonitor is not matching.
+          runbook_url: default_runbook_url
+          summary: No Masakari metrics are present in Prometheus
+          dashboard_url: default_dashboard_url

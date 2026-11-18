@@ -1,0 +1,69 @@
+additionalPrometheusRulesMap:
+  openstack-masakari-vmove-failures:
+    groups:
+    - name: openstack-masakari-vmove-failures
+      rules:
+      - alert: openstack-masakari-vmove-failed-critical
+        expr: openstack_masakari_vmove{job="os-metrics-prometheus-openstack-exporter", status="failed"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-vmove-failures
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_vmove
+        annotations:
+          description: >-
+            Instance {{ $labels.instance_uuid }} did not move off {{ $labels.source_host }} and
+            is still down. Evacuate it manually. A notification can reach finished while
+            individual moves failed, so this is the authoritative signal that workloads
+            were lost.
+          runbook_url: default_runbook_url
+          summary: Masakari {{ $labels.type }} FAILED for instance {{ $labels.instance_uuid }} from host {{ $labels.source_host }}
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-vmove-ignored-warning
+        expr: openstack_masakari_vmove{job="os-metrics-prometheus-openstack-exporter", status="ignored"} == 1
+        for: 12m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-vmove-failures
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_vmove
+        annotations:
+          description: >-
+            Masakari skipped instance {{ $labels.instance_uuid }} from {{ $labels.source_host }},
+            so it is not running on a healthy host. Usually the instance was already stopped,
+            lacks HA metadata, or is on local storage.
+          runbook_url: default_runbook_url
+          summary: Masakari ignored instance {{ $labels.instance_uuid }} during recovery of {{ $labels.source_host }}
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-vmove-stuck-warning
+        expr: sum by (job, instance, type) (openstack_masakari_vmoves{job="os-metrics-prometheus-openstack-exporter", status=~"pending|ongoing"}) > 0
+        for: 30m
+        labels:
+          severity: warning
+          group_name: openstack-masakari-vmove-failures
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_vmove
+        annotations:
+          description: >-
+            {{ $value }} {{ $labels.type }} moves pending or ongoing for 30m. A large failover
+            can take this long, so check whether the count is falling before escalating.
+          runbook_url: default_runbook_url
+          summary: Masakari {{ $labels.type }} moves have not completed after 30 minutes
+          dashboard_url: default_dashboard_url
+      - alert: openstack-masakari-vmove-stuck-critical
+        expr: sum by (job, instance, type) (openstack_masakari_vmoves{job="os-metrics-prometheus-openstack-exporter", status=~"pending|ongoing"}) > 0
+        for: 90m
+        labels:
+          severity: critical
+          group_name: openstack-masakari-vmove-failures
+          node_hostname: '{{ reReplaceAll ":.*" "" $labels.instance }}'
+          correlation_scope: masakari_vmove
+        annotations:
+          description: >-
+            {{ $value }} {{ $labels.type }} moves stuck for 90m. Those instances are down and
+            Masakari is not progressing. Identify them with openstack_masakari_vmove on the
+            pending and ongoing statuses, then evacuate manually.
+          runbook_url: default_runbook_url
+          summary: Masakari {{ $labels.type }} moves are stuck after 90 minutes
+          dashboard_url: default_dashboard_url
